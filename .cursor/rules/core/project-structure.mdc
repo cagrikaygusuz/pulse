@@ -1,0 +1,88 @@
+---
+description: Enforce layered architecture and project organization for Pulse Pomodoro timer
+globs:
+  - 'lib/**/*.dart'
+  - 'test/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Project Structure & Architecture
+
+## Objective
+Maintain clean layered architecture (Presentation, Domain, Data) as specified in the Pulse project blueprint, ensuring scalability and testability.
+
+## Context
+- Flutter cross-platform Pomodoro timer application
+- Layered Architecture: Presentation → Domain → Data
+- Offline-first strategy with Firebase synchronization
+- Multi-platform support (iOS, Android, Windows, macOS, Linux, Web)
+
+## Rules
+
+### Directory Structure
+- **lib/presentation/**: UI widgets, screens, and BLoC/Cubit files
+- **lib/domain/**: Core models, use cases, and business logic
+- **lib/data/**: Repositories, data sources (Isar, Firestore), and external services
+- **lib/core/**: Shared utilities, constants, themes, and extensions
+- **test/**: Mirror the lib structure for comprehensive testing
+
+✅ **Good Structure:**
+```
+lib/
+├── core/
+│   ├── constants/
+│   ├── themes/
+│   ├── utils/
+│   └── extensions/
+├── data/
+│   ├── repositories/
+│   ├── datasources/
+│   └── models/
+├── domain/
+│   ├── entities/
+│   ├── usecases/
+│   └── repositories/
+└── presentation/
+    ├── bloc/
+    ├── pages/
+    └── widgets/
+```
+
+❌ **Avoid:**
+- Mixing business logic in presentation layer
+- Direct Firebase calls from widgets
+- Placing models in presentation layer
+
+### File Naming Conventions
+- **Models/Entities**: `snake_case.dart` (e.g., `pomodoro_session.dart`)
+- **Use Cases**: `snake_case_usecase.dart` (e.g., `start_pomodoro_usecase.dart`)
+- **Repositories**: `snake_case_repository.dart` (e.g., `task_repository.dart`)
+- **BLoC/Cubit**: `snake_case_bloc.dart` or `snake_case_cubit.dart`
+- **Pages**: `snake_case_page.dart` (e.g., `timer_page.dart`)
+- **Widgets**: `snake_case_widget.dart` (e.g., `visual_countdown_widget.dart`)
+
+### Import Organization
+1. Dart SDK imports
+2. Flutter framework imports
+3. Third-party package imports
+4. Internal imports (core, data, domain, presentation)
+
+✅ **Good Import Order:**
+```dart
+import 'dart:async';
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import 'package:firebase_auth/firebase_auth.dart';
+
+import '../../core/constants/app_constants.dart';
+import '../../domain/entities/pomodoro_session.dart';
+import '../bloc/timer_cubit.dart';
+```
+
+## Exceptions
+- Generated files (e.g., `*.g.dart`, `*.freezed.dart`) may have different naming conventions
+- Platform-specific code in `lib/platform/` can deviate from standard structure

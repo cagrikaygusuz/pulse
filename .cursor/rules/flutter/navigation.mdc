@@ -1,0 +1,254 @@
+---
+description: Enforce proper navigation and routing patterns for Pulse Pomodoro timer
+globs:
+  - 'lib/presentation/pages/**/*.dart'
+  - 'lib/core/navigation/**/*.dart'
+alwaysApply: true
+priority: medium
+---
+
+# Navigation & Routing
+
+## Objective
+Implement consistent navigation patterns and routing for the Pulse Pomodoro timer with proper state management and deep linking support.
+
+## Context
+- Multi-page Pomodoro timer application
+- Deep linking for timer sessions and task management
+- Cross-platform navigation consistency
+- State preservation during navigation
+
+## Rules
+
+### Route Management
+- **Named Routes**: Use named routes for all navigation
+- **Route Parameters**: Pass data through route parameters, not constructor arguments
+- **Route Guards**: Implement authentication and timer state guards
+- **Deep Linking**: Support deep linking for timer sessions and tasks
+
+✅ **Good Route Configuration:**
+```dart
+class AppRoutes {
+  static const String home = '/';
+  static const String timer = '/timer';
+  static const String tasks = '/tasks';
+  static const String projects = '/projects';
+  static const String analytics = '/analytics';
+  static const String settings = '/settings';
+  
+  static Map<String, WidgetBuilder> get routes => {
+    home: (context) => const HomePage(),
+    timer: (context) => const TimerPage(),
+    tasks: (context) => const TasksPage(),
+    projects: (context) => const ProjectsPage(),
+    analytics: (context) => const AnalyticsPage(),
+    settings: (context) => const SettingsPage(),
+  };
+  
+  static Route<dynamic> generateRoute(RouteSettings settings) {
+    switch (settings.name) {
+      case timer:
+        final args = settings.arguments as Map<String, dynamic>?;
+        return MaterialPageRoute(
+          builder: (context) => TimerPage(
+            taskId: args?['taskId'] as String?,
+            duration: args?['duration'] as Duration?,
+          ),
+        );
+      case tasks:
+        final args = settings.arguments as Map<String, dynamic>?;
+        return MaterialPageRoute(
+          builder: (context) => TasksPage(
+            projectId: args?['projectId'] as String?,
+          ),
+        );
+      default:
+        return MaterialPageRoute(
+          builder: (context) => const NotFoundPage(),
+        );
+    }
+  }
+}
+```
+
+### Navigation Patterns
+- **BlocProvider**: Provide BLoC/Cubit at appropriate levels
+- **MultiBlocProvider**: Use for multiple providers in the same scope
+- **BlocListener**: Use for side effects (navigation, dialogs)
+- **BlocBuilder**: Use for UI updates based on state
+
+✅ **Good Navigation Implementation:**
+```dart
+class TimerPage extends StatelessWidget {
+  final String? taskId;
+  final Duration? duration;
+  
+  const TimerPage({
+    super.key,
+    this.taskId,
+    this.duration,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<TimerCubit>(
+          create: (context) => TimerCubit(
+            taskRepository: context.read<TaskRepository>(),
+            sessionRepository: context.read<SessionRepository>(),
+          ),
+        ),
+        BlocProvider<TaskCubit>(
+          create: (context) => TaskCubit(
+            taskRepository: context.read<TaskRepository>(),
+          ),
+        ),
+      ],
+      child: BlocListener<TimerCubit, TimerState>(
+        listener: (context, state) {
+          if (state is TimerCompletedState) {
+            _navigateToCompletion(context, state);
+          } else if (state is TimerErrorState) {
+            _showErrorDialog(context, state.message);
+          }
+        },
+        child: const TimerView(),
+      ),
+    );
+  }
+  
+  void _navigateToCompletion(BuildContext context, TimerCompletedState state) {
+    Navigator.pushNamed(
+      context,
+      AppRoutes.tasks,
+      arguments: {
+        'projectId': state.projectId,
+        'completedTaskId': state.taskId,
+      },
+    );
+  }
+  
+  void _showErrorDialog(BuildContext context, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Timer Error'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+### State Preservation
+- **AutomaticKeepAliveClientMixin**: Use for pages that should maintain state
+- **PageStorageKey**: Use for scroll positions and form data
+- **BlocProvider.value**: Use when passing existing BLoC instances
+
+✅ **Good State Preservation:**
+```dart
+class TasksPage extends StatefulWidget {
+  const TasksPage({super.key});
+
+  @override
+  State<TasksPage> createState() => _TasksPageState();
+}
+
+class _TasksPageState extends State<TasksPage>
+    with AutomaticKeepAliveClientMixin {
+  
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tasks'),
+      ),
+      body: BlocBuilder<TaskCubit, TaskState>(
+        builder: (context, state) {
+          if (state is TaskLoadedState) {
+            return ListView.builder(
+              key: const PageStorageKey('tasks_list'),
+              itemCount: state.tasks.length,
+              itemBuilder: (context, index) {
+                return TaskTile(
+                  key: ValueKey(state.tasks[index].id),
+                  task: state.tasks[index],
+                );
+              },
+            );
+          }
+          return const Center(child: CircularProgressIndicator());
+        },
+      ),
+    );
+  }
+}
+```
+
+### Deep Linking
+- **URL Parsing**: Parse deep link URLs to extract parameters
+- **Route Validation**: Validate deep link parameters before navigation
+- **Fallback Handling**: Provide fallback routes for invalid deep links
+
+✅ **Good Deep Linking Implementation:**
+```dart
+class DeepLinkHandler {
+  static void handleDeepLink(String url) {
+    final uri = Uri.parse(url);
+    
+    switch (uri.path) {
+      case '/timer':
+        final taskId = uri.queryParameters['taskId'];
+        final duration = uri.queryParameters['duration'];
+        
+        if (taskId != null) {
+          Navigator.pushNamed(
+            navigatorKey.currentContext!,
+            AppRoutes.timer,
+            arguments: {
+              'taskId': taskId,
+              'duration': duration != null 
+                ? Duration(minutes: int.parse(duration))
+                : null,
+            },
+          );
+        }
+        break;
+        
+      case '/tasks':
+        final projectId = uri.queryParameters['projectId'];
+        Navigator.pushNamed(
+          navigatorKey.currentContext!,
+          AppRoutes.tasks,
+          arguments: {
+            'projectId': projectId,
+          },
+        );
+        break;
+        
+      default:
+        Navigator.pushNamed(
+          navigatorKey.currentContext!,
+          AppRoutes.home,
+        );
+    }
+  }
+}
+```
+
+## Exceptions
+- Platform-specific navigation (iOS back gesture) can deviate from standard patterns
+- Emergency navigation (crash recovery) can bypass normal routing
+- Debug navigation can use direct widget instantiation

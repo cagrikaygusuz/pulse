@@ -1,0 +1,512 @@
+---
+description: Enforce Firebase deployment and configuration patterns for Pulse Pomodoro timer
+globs:
+  - 'firebase.json'
+  - 'firestore.rules'
+  - 'storage.rules'
+  - 'functions/**/*'
+alwaysApply: true
+priority: high
+---
+
+# Firebase Deployment
+
+## Objective
+Implement comprehensive Firebase deployment strategy for the Pulse Pomodoro timer with proper configuration, security rules, and cloud functions.
+
+## Context
+- Firebase Authentication for user management
+- Firestore for data storage and synchronization
+- Firebase Hosting for web deployment
+- Cloud Functions for server-side logic
+- Firebase Analytics for usage tracking
+
+## Rules
+
+### Firebase Configuration
+- **Project Setup**: Configure Firebase project settings
+- **Environment Management**: Manage different environments
+- **Service Configuration**: Configure Firebase services
+- **Security Rules**: Implement proper security rules
+
+✅ **Good Firebase Configuration:**
+```json
+// firebase.json
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs18",
+    "predeploy": [
+      "npm --prefix \"$RESOURCE_DIR\" run lint",
+      "npm --prefix \"$RESOURCE_DIR\" run build"
+    ]
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=31536000"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(png|jpg|jpeg|gif|ico|svg)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=31536000"
+          }
+        ]
+      }
+    ]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "functions": {
+      "port": 5001
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "ui": {
+      "enabled": true
+    }
+  }
+}
+```
+
+### Firestore Security Rules
+- **User Isolation**: Ensure users can only access their own data
+- **Data Validation**: Validate data structure and content
+- **Rate Limiting**: Implement rate limiting for writes
+- **Audit Logging**: Log security events
+
+✅ **Good Firestore Security Rules:**
+```javascript
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 50 &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    function isValidTask(data) {
+      return data.keys().hasAll(['name', 'projectId', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 100 &&
+        data.projectId is string &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    function isValidSession(data) {
+      return data.keys().hasAll(['taskId', 'userId', 'startTime', 'createdAt']) &&
+        data.taskId is string &&
+        data.userId is string &&
+        data.startTime is timestamp &&
+        data.createdAt is timestamp;
+    }
+    
+    // User profiles
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // Projects
+    match /projects/{projectId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId &&
+        isValidProject(request.resource.data);
+    }
+    
+    // Tasks
+    match /tasks/{taskId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.userId &&
+        isValidTask(request.resource.data);
+    }
+    
+    // Pomodoro sessions
+    match /pomodoro_sessions/{sessionId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId &&
+        isValidSession(request.resource.data);
+    }
+    
+    // Achievements
+    match /achievements/{achievementId} {
+      allow read: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // User settings
+    match /user_settings/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}
+```
+
+### Cloud Functions
+- **Server-Side Logic**: Implement server-side business logic
+- **Triggers**: Use Firestore triggers for data processing
+- **Authentication**: Implement proper authentication
+- **Error Handling**: Handle errors gracefully
+
+✅ **Good Cloud Functions:**
+```typescript
+// functions/src/index.ts
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
+
+admin.initializeApp();
+
+// Achievement processing trigger
+export const processAchievements = functions.firestore
+  .document('pomodoro_sessions/{sessionId}')
+  .onCreate(async (snap, context) => {
+    const session = snap.data();
+    const userId = session.userId;
+    
+    try {
+      // Get user's sessions for the last 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const sessionsSnapshot = await admin.firestore()
+        .collection('pomodoro_sessions')
+        .where('userId', '==', userId)
+        .where('completedAt', '>=', sevenDaysAgo)
+        .where('isCompleted', '==', true)
+        .get();
+      
+      const sessions = sessionsSnapshot.docs.map(doc => doc.data());
+      
+      // Check for daily streak achievement
+      const dailyStreak = calculateDailyStreak(sessions);
+      
+      if (dailyStreak >= 7) {
+        await grantAchievement(userId, 'daily_streak_7');
+      }
+      
+      // Check for total sessions achievement
+      const totalSessions = sessions.length;
+      
+      if (totalSessions >= 100) {
+        await grantAchievement(userId, 'hundred_sessions');
+      }
+      
+    } catch (error) {
+      console.error('Error processing achievements:', error);
+    }
+  });
+
+// Analytics aggregation
+export const aggregateAnalytics = functions.pubsub
+  .schedule('0 0 * * *') // Daily at midnight
+  .timeZone('UTC')
+  .onRun(async (context) => {
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // Get all sessions from yesterday
+      const sessionsSnapshot = await admin.firestore()
+        .collection('pomodoro_sessions')
+        .where('completedAt', '>=', yesterday)
+        .where('completedAt', '<', today)
+        .where('isCompleted', '==', true)
+        .get();
+      
+      const sessions = sessionsSnapshot.docs.map(doc => doc.data());
+      
+      // Calculate daily statistics
+      const stats = {
+        totalSessions: sessions.length,
+        totalFocusTime: sessions.reduce((sum, session) => sum + session.duration, 0),
+        averageSessionLength: sessions.length > 0 ? 
+          sessions.reduce((sum, session) => sum + session.duration, 0) / sessions.length : 0,
+        uniqueUsers: new Set(sessions.map(s => s.userId)).size,
+        date: yesterday.toISOString().split('T')[0]
+      };
+      
+      // Store aggregated statistics
+      await admin.firestore()
+        .collection('daily_stats')
+        .doc(yesterday.toISOString().split('T')[0])
+        .set(stats);
+        
+    } catch (error) {
+      console.error('Error aggregating analytics:', error);
+    }
+  });
+
+// Helper functions
+async function grantAchievement(userId: string, achievementId: string) {
+  const achievementRef = admin.firestore()
+    .collection('achievements')
+    .doc(`${userId}_${achievementId}`);
+  
+  const achievementDoc = await achievementRef.get();
+  
+  if (!achievementDoc.exists) {
+    await achievementRef.set({
+      userId: userId,
+      achievementId: achievementId,
+      unlockedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    // Send notification
+    await sendAchievementNotification(userId, achievementId);
+  }
+}
+
+function calculateDailyStreak(sessions: any[]): number {
+  const dailySessions = new Map<string, number>();
+  
+  sessions.forEach(session => {
+    const date = session.completedAt.toDate().toISOString().split('T')[0];
+    dailySessions.set(date, (dailySessions.get(date) || 0) + 1);
+  });
+  
+  const sortedDates = Array.from(dailySessions.keys()).sort();
+  let streak = 0;
+  let currentDate = new Date();
+  
+  for (let i = sortedDates.length - 1; i >= 0; i--) {
+    const sessionDate = new Date(sortedDates[i]);
+    const expectedDate = new Date(currentDate);
+    expectedDate.setDate(expectedDate.getDate() - streak);
+    
+    if (sessionDate.toDateString() === expectedDate.toDateString()) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  
+  return streak;
+}
+
+async function sendAchievementNotification(userId: string, achievementId: string) {
+  // Implementation for sending push notifications
+  // This would integrate with FCM or other notification services
+}
+```
+
+### Storage Security Rules
+- **File Upload**: Secure file upload functionality
+- **Access Control**: Control access to uploaded files
+- **File Validation**: Validate uploaded file types and sizes
+- **Virus Scanning**: Implement virus scanning for uploads
+
+✅ **Good Storage Security Rules:**
+```javascript
+// storage.rules
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // User profile images
+    match /users/{userId}/profile/{fileName} {
+      allow read: if true; // Profile images are public
+      allow write: if request.auth != null && 
+        request.auth.uid == userId &&
+        request.resource.size < 5 * 1024 * 1024 && // 5MB limit
+        request.resource.contentType.matches('image/.*');
+    }
+    
+    // User data exports
+    match /users/{userId}/exports/{fileName} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == userId &&
+        request.resource.size < 50 * 1024 * 1024 && // 50MB limit
+        request.resource.contentType == 'application/json';
+    }
+    
+    // App assets (public)
+    match /assets/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && 
+        request.auth.token.admin == true;
+    }
+  }
+}
+```
+
+### Environment Configuration
+- **Environment Variables**: Manage environment-specific variables
+- **Secrets Management**: Secure handling of secrets
+- **Configuration Files**: Environment-specific configuration
+- **Deployment Scripts**: Automated deployment scripts
+
+✅ **Good Environment Configuration:**
+```bash
+#!/bin/bash
+# deploy-firebase.sh
+
+set -e
+
+ENVIRONMENT=${1:-staging}
+PROJECT_ID=""
+
+case $ENVIRONMENT in
+  "staging")
+    PROJECT_ID="pulse-timer-staging"
+    ;;
+  "production")
+    PROJECT_ID="pulse-timer-prod"
+    ;;
+  *)
+    echo "Invalid environment: $ENVIRONMENT"
+    echo "Usage: $0 [staging|production]"
+    exit 1
+    ;;
+esac
+
+echo "Deploying to Firebase project: $PROJECT_ID"
+
+# Set Firebase project
+firebase use $PROJECT_ID
+
+# Deploy Firestore rules
+echo "Deploying Firestore rules..."
+firebase deploy --only firestore:rules
+
+# Deploy Storage rules
+echo "Deploying Storage rules..."
+firebase deploy --only storage
+
+# Deploy Cloud Functions
+echo "Deploying Cloud Functions..."
+firebase deploy --only functions
+
+# Deploy Hosting
+echo "Deploying Hosting..."
+firebase deploy --only hosting
+
+echo "Deployment completed successfully!"
+```
+
+### Monitoring and Logging
+- **Error Tracking**: Implement error tracking
+- **Performance Monitoring**: Monitor performance metrics
+- **Usage Analytics**: Track usage patterns
+- **Alerting**: Set up alerts for critical issues
+
+✅ **Good Monitoring Configuration:**
+```typescript
+// functions/src/monitoring.ts
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
+
+// Error tracking
+export const trackError = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  
+  const { error, stackTrace, userId, timestamp } = data;
+  
+  try {
+    await admin.firestore().collection('error_logs').add({
+      error: error,
+      stackTrace: stackTrace,
+      userId: userId || context.auth.uid,
+      timestamp: timestamp || admin.firestore.FieldValue.serverTimestamp(),
+      environment: functions.config().app.environment || 'production'
+    });
+    
+    return { success: true };
+  } catch (err) {
+    console.error('Failed to track error:', err);
+    throw new functions.https.HttpsError('internal', 'Failed to track error');
+  }
+});
+
+// Performance monitoring
+export const trackPerformance = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  
+  const { metric, value, timestamp } = data;
+  
+  try {
+    await admin.firestore().collection('performance_metrics').add({
+      metric: metric,
+      value: value,
+      userId: context.auth.uid,
+      timestamp: timestamp || admin.firestore.FieldValue.serverTimestamp(),
+      environment: functions.config().app.environment || 'production'
+    });
+    
+    return { success: true };
+  } catch (err) {
+    console.error('Failed to track performance:', err);
+    throw new functions.https.HttpsError('internal', 'Failed to track performance');
+  }
+});
+```
+
+## Exceptions
+- Development environment can use relaxed security rules
+- Emergency deployments can bypass certain checks
+- Local development can use Firebase emulators

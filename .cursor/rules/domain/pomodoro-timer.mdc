@@ -1,0 +1,293 @@
+---
+description: Enforce Pomodoro timer mechanics and session management rules for Pulse application
+globs:
+  - 'lib/domain/entities/pomodoro_session.dart'
+  - 'lib/domain/usecases/timer/**/*.dart'
+  - 'lib/presentation/bloc/timer/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Pomodoro Timer Mechanics
+
+## Objective
+Implement core Pomodoro technique mechanics with proper session management, cycle transitions, and timer lock functionality as specified in the Pulse project blueprint.
+
+## Context
+- Standard Pomodoro technique: 25min work → 5min break → repeat → 15min long break
+- Timer lock mechanism preventing interruptions during active sessions
+- Graceful skip functionality with proper logging
+- Cross-platform timer consistency
+
+## Rules
+
+### Session Types & Cycles
+- **Work Sessions**: 25 minutes (configurable)
+- **Short Breaks**: 5 minutes (configurable)
+- **Long Breaks**: 15 minutes (configurable)
+- **Cycle Pattern**: Work → Short Break → Work → ... → Long Break (after 4 work sessions)
+
+✅ **Good Session Type Implementation:**
+```dart
+enum SessionType {
+  work('Work', Duration(minutes: 25)),
+  shortBreak('Short Break', Duration(minutes: 5)),
+  longBreak('Long Break', Duration(minutes: 15));
+  
+  const SessionType(this.displayName, this.defaultDuration);
+  
+  final String displayName;
+  final Duration defaultDuration;
+  
+  bool get isBreak => this != SessionType.work;
+  bool get isWork => this == SessionType.work;
+}
+
+class PomodoroCycle {
+  static const int workSessionsBeforeLongBreak = 4;
+  
+  static SessionType getNextSessionType(SessionType current, int completedWorkSessions) {
+    switch (current) {
+      case SessionType.work:
+        return completedWorkSessions % workSessionsBeforeLongBreak == 0
+            ? SessionType.longBreak
+            : SessionType.shortBreak;
+      case SessionType.shortBreak:
+      case SessionType.longBreak:
+        return SessionType.work;
+    }
+  }
+}
+```
+
+### Timer Lock Implementation
+- **Lock State**: Timer is locked when in `TimerRunningState`
+- **Locked Operations**: Disable skip, reset, duration change during active sessions
+- **UI Feedback**: Visual indicators for locked state
+- **Exception Handling**: Proper error messages for locked operations
+
+✅ **Good Timer Lock Implementation:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  bool get isTimerLocked => state is TimerRunningState;
+  
+  void startTimer({
+    required String taskId,
+    Duration? customDuration,
+  }) {
+    if (isTimerLocked) {
+      throw TimerLockedException(
+        'Cannot start timer while another session is active. '
+        'Complete or skip the current session first.',
+      );
+    }
+    
+    final duration = customDuration ?? SessionType.work.defaultDuration;
+    
+    emit(TimerRunningState(
+      remainingTime: duration,
+      taskId: taskId,
+      startTime: DateTime.now(),
+      sessionType: SessionType.work,
+    ));
+  }
+  
+  void skipSession() {
+    if (!isTimerLocked) {
+      throw TimerNotRunningException('No active session to skip');
+    }
+    
+    final currentState = state as TimerRunningState;
+    _logInterruptedSession(currentState);
+    
+    emit(TimerSkippedState(
+      taskId: currentState.taskId,
+      interruptedAt: DateTime.now(),
+      completedDuration: DateTime.now().difference(currentState.startTime),
+      sessionType: currentState.sessionType,
+    ));
+  }
+  
+  void resetTimer() {
+    if (isTimerLocked) {
+      throw TimerLockedException('Cannot reset timer during active session');
+    }
+    
+    emit(TimerInitialState());
+  }
+}
+```
+
+### Graceful Skip Implementation
+- **Skip Logging**: Log all skipped sessions for analytics
+- **Skip Categories**: Categorize skips (interruption, distraction, emergency)
+- **Skip Validation**: Validate skip reasons and provide feedback
+- **Skip Analytics**: Track skip patterns for productivity insights
+
+✅ **Good Graceful Skip Implementation:**
+```dart
+enum SkipReason {
+  interruption('Interruption', 'External interruption occurred'),
+  distraction('Distraction', 'Lost focus due to distraction'),
+  emergency('Emergency', 'Urgent matter requiring attention'),
+  taskComplete('Task Complete', 'Task finished before timer'),
+  technical('Technical Issue', 'App or device technical problem');
+  
+  const SkipReason(this.displayName, this.description);
+  
+  final String displayName;
+  final String description;
+}
+
+class TimerCubit extends Cubit<TimerState> {
+  Future<void> gracefulSkip({
+    required SkipReason reason,
+    String? notes,
+  }) async {
+    if (!isTimerLocked) {
+      throw TimerNotRunningException('No active session to skip');
+    }
+    
+    final currentState = state as TimerRunningState;
+    
+    // Log the interrupted session
+    await _logInterruptedSession(
+      currentState,
+      reason: reason,
+      notes: notes,
+    );
+    
+    emit(TimerSkippedState(
+      taskId: currentState.taskId,
+      interruptedAt: DateTime.now(),
+      completedDuration: DateTime.now().difference(currentState.startTime),
+      sessionType: currentState.sessionType,
+      skipReason: reason,
+      notes: notes,
+    ));
+  }
+  
+  Future<void> _logInterruptedSession(
+    TimerRunningState state,
+    {required SkipReason reason, String? notes}
+  ) async {
+    final interruptedSession = InterruptedSession(
+      id: const Uuid().v4(),
+      taskId: state.taskId,
+      sessionType: state.sessionType,
+      startTime: state.startTime,
+      interruptedAt: DateTime.now(),
+      completedDuration: DateTime.now().difference(state.startTime),
+      skipReason: reason,
+      notes: notes,
+      createdAt: DateTime.now(),
+    );
+    
+    await sessionRepository.saveInterruptedSession(interruptedSession);
+  }
+}
+```
+
+### Session Completion & Transitions
+- **Auto-Transition**: Automatically transition to next session type
+- **Completion Logging**: Log completed sessions with metrics
+- **Achievement Tracking**: Check for achievements on completion
+- **Notification Handling**: Handle platform-specific notifications
+
+✅ **Good Session Completion Implementation:**
+```dart
+class TimerCubit extends Cubit<TimerCubit> {
+  void _onTimerTick() {
+    if (state is TimerRunningState) {
+      final currentState = state as TimerRunningState;
+      final newTime = currentState.remainingTime - Duration(seconds: 1);
+      
+      if (newTime.inSeconds <= 0) {
+        _completeSession(currentState);
+      } else {
+        emit(TimerRunningState(
+          remainingTime: newTime,
+          taskId: currentState.taskId,
+          startTime: currentState.startTime,
+          sessionType: currentState.sessionType,
+        ));
+      }
+    }
+  }
+  
+  Future<void> _completeSession(TimerRunningState state) async {
+    // Log completed session
+    final completedSession = CompletedSession(
+      id: const Uuid().v4(),
+      taskId: state.taskId,
+      sessionType: state.sessionType,
+      startTime: state.startTime,
+      completedAt: DateTime.now(),
+      duration: state.startTime.difference(DateTime.now()),
+      isCompleted: true,
+      createdAt: DateTime.now(),
+    );
+    
+    await sessionRepository.saveCompletedSession(completedSession);
+    
+    // Check for achievements
+    await _checkAchievements(state);
+    
+    // Determine next session type
+    final nextSessionType = PomodoroCycle.getNextSessionType(
+      state.sessionType,
+      await _getCompletedWorkSessionsCount(),
+    );
+    
+    emit(TimerCompletedState(
+      taskId: state.taskId,
+      completedDuration: completedSession.duration,
+      sessionType: state.sessionType,
+      nextSessionType: nextSessionType,
+    ));
+  }
+}
+```
+
+### Custom Duration Support
+- **Duration Validation**: Validate custom durations (min 1min, max 60min)
+- **Duration Persistence**: Save custom durations per user
+- **Duration Sync**: Sync custom durations across devices
+- **Duration UI**: Provide intuitive duration selection interface
+
+✅ **Good Custom Duration Implementation:**
+```dart
+class CustomDurationSettings {
+  final Duration workDuration;
+  final Duration shortBreakDuration;
+  final Duration longBreakDuration;
+  
+  const CustomDurationSettings({
+    required this.workDuration,
+    required this.shortBreakDuration,
+    required this.longBreakDuration,
+  });
+  
+  static const Duration minDuration = Duration(minutes: 1);
+  static const Duration maxDuration = Duration(minutes: 60);
+  
+  static CustomDurationSettings validate(CustomDurationSettings settings) {
+    return CustomDurationSettings(
+      workDuration: _clampDuration(settings.workDuration),
+      shortBreakDuration: _clampDuration(settings.shortBreakDuration),
+      longBreakDuration: _clampDuration(settings.longBreakDuration),
+    );
+  }
+  
+  static Duration _clampDuration(Duration duration) {
+    if (duration < minDuration) return minDuration;
+    if (duration > maxDuration) return maxDuration;
+    return duration;
+  }
+}
+```
+
+## Exceptions
+- Emergency situations can bypass timer lock (with proper logging)
+- Debug mode can disable timer lock for testing
+- Platform-specific timer limitations may require workarounds

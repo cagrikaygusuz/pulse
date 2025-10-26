@@ -1,0 +1,597 @@
+---
+description: Enforce accessibility standards for Pulse Pomodoro timer
+globs:
+  - 'lib/presentation/**/*.dart'
+alwaysApply: true
+priority: medium
+---
+
+# Accessibility Standards
+
+## Objective
+Implement comprehensive accessibility features for the Pulse Pomodoro timer to ensure usability for users with disabilities and support assistive technologies.
+
+## Context
+- Cross-platform Flutter Pomodoro timer
+- Support for screen readers and assistive technologies
+- Keyboard navigation for desktop platforms
+- High contrast and large text support
+- Focus management for timer interactions
+
+## Rules
+
+### Semantic Labels
+- **Semantic Widgets**: Use `Semantics` widget for custom components
+- **Descriptive Labels**: Provide clear, descriptive labels for all interactive elements
+- **Hint Text**: Include hint text for complex interactions
+- **State Announcements**: Announce state changes to screen readers
+
+✅ **Good Semantic Implementation:**
+```dart
+class AccessibleTimerButton extends StatelessWidget {
+  final String label;
+  final String semanticLabel;
+  final String? hint;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool isEnabled;
+  final bool isSelected;
+  
+  const AccessibleTimerButton({
+    super.key,
+    required this.label,
+    required this.semanticLabel,
+    this.hint,
+    required this.icon,
+    this.onPressed,
+    this.isEnabled = true,
+    this.isSelected = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: semanticLabel,
+      hint: hint ?? (isEnabled ? 'Tap to $label' : 'Button is disabled'),
+      button: true,
+      enabled: isEnabled,
+      selected: isSelected,
+      onTap: isEnabled ? onPressed : null,
+      child: Material(
+        color: isSelected 
+            ? Theme.of(context).primaryColor
+            : (isEnabled ? Colors.blue : Colors.grey),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: isEnabled ? onPressed : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            constraints: const BoxConstraints(
+              minWidth: 44,
+              minHeight: 44,
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AccessibleTimerDisplay extends StatelessWidget {
+  final Duration remainingTime;
+  final bool isRunning;
+  final String taskName;
+  
+  const AccessibleTimerDisplay({
+    super.key,
+    required this.remainingTime,
+    required this.isRunning,
+    required this.taskName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final timeString = _formatDuration(remainingTime);
+    final statusText = isRunning ? 'running' : 'paused';
+    final announcement = 'Timer $statusText. $timeString remaining for task: $taskName';
+    
+    return Semantics(
+      label: announcement,
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Text(
+              timeString,
+              style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                fontSize: 48,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              taskName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            Semantics(
+              label: 'Timer status: $statusText',
+              child: Icon(
+                isRunning ? Icons.play_circle : Icons.pause_circle,
+                size: 32,
+                color: isRunning ? Colors.green : Colors.orange,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+}
+```
+
+### Focus Management
+- **Focus Traversal**: Implement proper focus traversal order
+- **Focus Indicators**: Provide clear visual focus indicators
+- **Focus Trapping**: Trap focus within modal dialogs
+- **Keyboard Navigation**: Support full keyboard navigation
+
+✅ **Good Focus Management:**
+```dart
+class AccessibleTimerPage extends StatefulWidget {
+  const AccessibleTimerPage({super.key});
+
+  @override
+  State<AccessibleTimerPage> createState() => _AccessibleTimerPageState();
+}
+
+class _AccessibleTimerPageState extends State<AccessibleTimerPage> {
+  final FocusNode _startButtonFocus = FocusNode();
+  final FocusNode _pauseButtonFocus = FocusNode();
+  final FocusNode _stopButtonFocus = FocusNode();
+  
+  @override
+  void initState() {
+    super.initState();
+    // Set initial focus
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startButtonFocus.requestFocus();
+    });
+  }
+  
+  @override
+  void dispose() {
+    _startButtonFocus.dispose();
+    _pauseButtonFocus.dispose();
+    _stopButtonFocus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Focus Timer'),
+        leading: Semantics(
+          label: 'Back to home',
+          button: true,
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+      ),
+      body: FocusTraversalGroup(
+        child: Column(
+          children: [
+            Expanded(
+              child: const AccessibleTimerDisplay(
+                remainingTime: Duration(minutes: 25),
+                isRunning: false,
+                taskName: 'Test Task',
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Focus(
+                    focusNode: _startButtonFocus,
+                    child: AccessibleTimerButton(
+                      label: 'Start',
+                      semanticLabel: 'Start timer',
+                      hint: 'Press Enter to start the focus session',
+                      icon: Icons.play_arrow,
+                      onPressed: _startTimer,
+                    ),
+                  ),
+                  Focus(
+                    focusNode: _pauseButtonFocus,
+                    child: AccessibleTimerButton(
+                      label: 'Pause',
+                      semanticLabel: 'Pause timer',
+                      hint: 'Press Enter to pause the current session',
+                      icon: Icons.pause,
+                      onPressed: _pauseTimer,
+                    ),
+                  ),
+                  Focus(
+                    focusNode: _stopButtonFocus,
+                    child: AccessibleTimerButton(
+                      label: 'Stop',
+                      semanticLabel: 'Stop timer',
+                      hint: 'Press Enter to stop and complete the session',
+                      icon: Icons.stop,
+                      onPressed: _stopTimer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  void _startTimer() {
+    // Start timer logic
+    _pauseButtonFocus.requestFocus();
+  }
+  
+  void _pauseTimer() {
+    // Pause timer logic
+    _startButtonFocus.requestFocus();
+  }
+  
+  void _stopTimer() {
+    // Stop timer logic
+    _startButtonFocus.requestFocus();
+  }
+}
+```
+
+### High Contrast Support
+- **Color Contrast**: Ensure sufficient color contrast ratios
+- **High Contrast Mode**: Support system high contrast mode
+- **Alternative Indicators**: Provide non-color indicators for important information
+- **Custom Themes**: Support custom high contrast themes
+
+✅ **Good High Contrast Support:**
+```dart
+class AccessibleTheme {
+  static ThemeData getHighContrastTheme() {
+    return ThemeData(
+      brightness: Brightness.light,
+      colorScheme: const ColorScheme.light(
+        primary: Colors.black,
+        secondary: Colors.white,
+        surface: Colors.white,
+        background: Colors.white,
+        error: Colors.red,
+        onPrimary: Colors.white,
+        onSecondary: Colors.black,
+        onSurface: Colors.black,
+        onBackground: Colors.black,
+        onError: Colors.white,
+      ),
+      textTheme: const TextTheme(
+        headlineLarge: TextStyle(
+          color: Colors.black,
+          fontWeight: FontWeight.bold,
+          fontSize: 32,
+        ),
+        bodyLarge: TextStyle(
+          color: Colors.black,
+          fontSize: 16,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Colors.black, width: 2),
+        ),
+      ),
+    );
+  }
+  
+  static Color getContrastColor(Color backgroundColor) {
+    // Calculate luminance to determine appropriate text color
+    final luminance = backgroundColor.computeLuminance();
+    return luminance > 0.5 ? Colors.black : Colors.white;
+  }
+}
+
+class AccessibleVisualCountdown extends StatelessWidget {
+  final Duration remainingTime;
+  final Duration totalDuration;
+  final bool isHighContrast;
+  
+  const AccessibleVisualCountdown({
+    super.key,
+    required this.remainingTime,
+    required this.totalDuration,
+    this.isHighContrast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = remainingTime.inSeconds / totalDuration.inSeconds;
+    final colors = _getColors(context);
+    
+    return Semantics(
+      label: 'Timer progress: ${(progress * 100).round()}% complete',
+      child: CustomPaint(
+        painter: AccessibleCountdownPainter(
+          progress: progress,
+          primaryColor: colors.primary,
+          backgroundColor: colors.background,
+          isHighContrast: isHighContrast,
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _formatDuration(remainingTime),
+                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                  color: colors.text,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              if (isHighContrast) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${(progress * 100).round()}% Complete',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colors.text,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  _CountdownColors _getColors(BuildContext context) {
+    if (isHighContrast) {
+      return _CountdownColors(
+        primary: Colors.black,
+        background: Colors.white,
+        text: Colors.black,
+      );
+    } else {
+      return _CountdownColors(
+        primary: Theme.of(context).primaryColor,
+        background: Theme.of(context).colorScheme.surface,
+        text: Theme.of(context).colorScheme.onSurface,
+      );
+    }
+  }
+}
+
+class _CountdownColors {
+  final Color primary;
+  final Color background;
+  final Color text;
+  
+  const _CountdownColors({
+    required this.primary,
+    required this.background,
+    required this.text,
+  });
+}
+```
+
+### Screen Reader Support
+- **Live Regions**: Use live regions for dynamic content updates
+- **Heading Structure**: Implement proper heading hierarchy
+- **List Announcements**: Announce list items properly
+- **Form Labels**: Provide proper form labels and error messages
+
+✅ **Good Screen Reader Support:**
+```dart
+class AccessibleTaskList extends StatelessWidget {
+  final List<Task> tasks;
+  final Function(Task) onTaskSelected;
+  
+  const AccessibleTaskList({
+    super.key,
+    required this.tasks,
+    required this.onTaskSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Task list with ${tasks.length} tasks',
+      child: ListView.builder(
+        itemCount: tasks.length,
+        itemBuilder: (context, index) {
+          final task = tasks[index];
+          return Semantics(
+            label: 'Task ${index + 1} of ${tasks.length}: ${task.name}',
+            hint: 'Tap to select this task for focus session',
+            button: true,
+            onTap: () => onTaskSelected(task),
+            child: ListTile(
+              title: Text(task.name),
+              subtitle: Text('Estimated duration: ${task.estimatedDuration.inMinutes} minutes'),
+              trailing: Semantics(
+                label: 'Task status: ${task.status.displayName}',
+                child: Icon(
+                  _getStatusIcon(task.status),
+                  semanticLabel: task.status.displayName,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+  
+  IconData _getStatusIcon(TaskStatus status) {
+    switch (status) {
+      case TaskStatus.pending:
+        return Icons.radio_button_unchecked;
+      case TaskStatus.inProgress:
+        return Icons.play_circle_outline;
+      case TaskStatus.completed:
+        return Icons.check_circle;
+      case TaskStatus.cancelled:
+        return Icons.cancel;
+    }
+  }
+}
+
+class AccessibleFormField extends StatelessWidget {
+  final String label;
+  final String? hint;
+  final String? errorText;
+  final Widget child;
+  
+  const AccessibleFormField({
+    super.key,
+    required this.label,
+    this.hint,
+    this.errorText,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: label,
+      hint: hint,
+      textField: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          child,
+          if (errorText != null) ...[
+            const SizedBox(height: 4),
+            Semantics(
+              label: 'Error: $errorText',
+              child: Text(
+                errorText!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+```
+
+### Large Text Support
+- **Scalable Text**: Use scalable text sizes
+- **Layout Adaptation**: Adapt layouts for large text
+- **Minimum Touch Targets**: Ensure minimum touch target sizes
+- **Spacing**: Provide adequate spacing for large text
+
+✅ **Good Large Text Support:**
+```dart
+class AccessibleTextScaling extends StatelessWidget {
+  const AccessibleTextScaling({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final textScaleFactor = MediaQuery.of(context).textScaleFactor;
+    final isLargeText = textScaleFactor > 1.3;
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Focus Timer',
+          style: TextStyle(
+            fontSize: isLargeText ? 20 : 18,
+          ),
+        ),
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(isLargeText ? 24 : 16),
+        child: Column(
+          children: [
+            Text(
+              'Current Session',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontSize: isLargeText ? 28 : 24,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              constraints: BoxConstraints(
+                minHeight: isLargeText ? 200 : 150,
+                minWidth: isLargeText ? 200 : 150,
+              ),
+              child: const AccessibleTimerDisplay(
+                remainingTime: Duration(minutes: 25),
+                isRunning: false,
+                taskName: 'Test Task',
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              height: isLargeText ? 60 : 48,
+              child: ElevatedButton(
+                onPressed: () {},
+                child: Text(
+                  'Start Focus Session',
+                  style: TextStyle(
+                    fontSize: isLargeText ? 18 : 16,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+## Exceptions
+- Platform-specific accessibility features may not be available on all platforms
+- Custom animations may need to be disabled for certain accessibility settings
+- Emergency situations can bypass accessibility constraints with proper logging

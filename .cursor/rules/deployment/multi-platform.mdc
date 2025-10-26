@@ -1,0 +1,472 @@
+---
+description: Enforce multi-platform build and deployment patterns for Pulse Pomodoro timer
+globs:
+  - 'android/**/*'
+  - 'ios/**/*'
+  - 'windows/**/*'
+  - 'macos/**/*'
+  - 'linux/**/*'
+  - 'web/**/*'
+alwaysApply: true
+priority: high
+---
+
+# Multi-Platform Deployment
+
+## Objective
+Implement comprehensive multi-platform deployment strategy for the Pulse Pomodoro timer across iOS, Android, Windows, macOS, Linux, and Web platforms.
+
+## Context
+- Cross-platform Flutter application
+- Platform-specific configurations and optimizations
+- App store deployment for mobile platforms
+- Desktop application distribution
+- Web hosting and CDN deployment
+
+## Rules
+
+### Android Deployment
+- **Build Configuration**: Configure Android build settings
+- **Signing**: Implement proper app signing for release builds
+- **Play Store**: Automate Play Store deployment
+- **App Bundle**: Use Android App Bundle for optimized distribution
+
+✅ **Good Android Configuration:**
+```gradle
+// android/app/build.gradle
+android {
+    compileSdkVersion 34
+    ndkVersion "25.1.8937393"
+
+    defaultConfig {
+        applicationId "com.pulse.timer"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        
+        // Enable multidex for large apps
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            keyAlias keystoreProperties['keyAlias']
+            keyPassword keystoreProperties['keyPassword']
+            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+            storePassword keystoreProperties['storePassword']
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // Enable view binding
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation 'androidx.multidex:multidex:2.0.1'
+}
+```
+
+```yaml
+# .github/workflows/android-deploy.yml
+name: Android Deployment
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-android:
+    name: Deploy to Play Store
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build Android App Bundle
+        run: flutter build appbundle --release
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          
+      - name: Deploy to Play Store
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          packageName: com.pulse.timer
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: production
+          status: completed
+```
+
+### iOS Deployment
+- **Build Configuration**: Configure iOS build settings
+- **Code Signing**: Implement proper code signing
+- **App Store**: Automate App Store deployment
+- **TestFlight**: Use TestFlight for beta testing
+
+✅ **Good iOS Configuration:**
+```yaml
+# .github/workflows/ios-deploy.yml
+name: iOS Deployment
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-ios:
+    name: Deploy to App Store
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
+        
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.0'
+          
+      - name: Import Code Signing Certificate
+        uses: Apple-Actions/import-codesign-certs@v1
+        with:
+          p12-file-base64: ${{ secrets.CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.CERTIFICATE_PASSWORD }}
+          
+      - name: Install Provisioning Profile
+        uses: Apple-Actions/download-provisioning-profiles@v1
+        with:
+          bundle-id: com.pulse.timer
+          profile-type: app-store
+          profile-url: ${{ secrets.PROVISIONING_PROFILE_URL }}
+          
+      - name: Build and Archive
+        run: |
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -archivePath Runner.xcarchive \
+            archive
+            
+      - name: Export IPA
+        run: |
+          cd ios
+          xcodebuild -exportArchive \
+            -archivePath Runner.xcarchive \
+            -exportPath . \
+            -exportOptionsPlist ExportOptions.plist
+            
+      - name: Deploy to App Store
+        uses: Apple-Actions/upload-app-store@v1
+        with:
+          app-path: ios/Runner.ipa
+          api-key: ${{ secrets.APP_STORE_API_KEY }}
+          api-issuer: ${{ secrets.APP_STORE_API_ISSUER }}
+```
+
+### Desktop Deployment
+- **Windows**: Configure Windows build and packaging
+- **macOS**: Configure macOS build and notarization
+- **Linux**: Configure Linux build and packaging
+- **Distribution**: Set up distribution channels
+
+✅ **Good Desktop Configuration:**
+```yaml
+# .github/workflows/desktop-deploy.yml
+name: Desktop Deployment
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-windows:
+    name: Deploy Windows
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build Windows
+        run: flutter build windows --release
+        
+      - name: Create Windows Installer
+        uses: ico-consulting/msix@v1
+        with:
+          path: build/windows/x64/runner/Release/
+          display-name: Pulse Timer
+          publisher-display-name: Pulse Team
+          version: ${{ github.event.release.tag_name }}
+          
+      - name: Upload Windows Release
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-installer
+          path: build/windows/x64/runner/Release/*.msix
+
+  deploy-macos:
+    name: Deploy macOS
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build macOS
+        run: flutter build macos --release
+        
+      - name: Notarize macOS App
+        run: |
+          # Code signing and notarization
+          codesign --force --deep --sign "Developer ID Application: Pulse Team" \
+            build/macos/Build/Products/Release/Pulse.app
+          
+          # Create DMG
+          hdiutil create -volname "Pulse Timer" \
+            -srcfolder build/macos/Build/Products/Release/Pulse.app \
+            -ov -format UDZO build/macos/Build/Products/Release/Pulse.dmg
+            
+      - name: Upload macOS Release
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-installer
+          path: build/macos/Build/Products/Release/Pulse.dmg
+
+  deploy-linux:
+    name: Deploy Linux
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build Linux
+        run: flutter build linux --release
+        
+      - name: Create AppImage
+        uses: AppImage/AppImage@v1
+        with:
+          path: build/linux/x64/release/bundle/
+          name: Pulse-Timer
+          
+      - name: Upload Linux Release
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-appimage
+          path: build/linux/x64/release/bundle/Pulse-Timer.AppImage
+```
+
+### Web Deployment
+- **Firebase Hosting**: Deploy to Firebase Hosting
+- **CDN Configuration**: Configure CDN for optimal performance
+- **PWA Configuration**: Set up Progressive Web App features
+- **SEO Optimization**: Implement SEO best practices
+
+✅ **Good Web Configuration:**
+```json
+// firebase.json
+{
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=31536000"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(png|jpg|jpeg|gif|ico|svg)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=31536000"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+```yaml
+# .github/workflows/web-deploy.yml
+name: Web Deployment
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  deploy-web:
+    name: Deploy Web
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Install dependencies
+        run: flutter pub get
+        
+      - name: Build Web
+        run: flutter build web --release --web-renderer html
+        
+      - name: Deploy to Firebase
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: live
+          projectId: pulse-timer
+          
+      - name: Deploy to CDN
+        uses: actions/upload-artifact@v3
+        with:
+          name: web-build
+          path: build/web/
+```
+
+### Release Management
+- **Version Control**: Implement semantic versioning
+- **Release Notes**: Generate automated release notes
+- **Distribution**: Distribute across all platforms
+- **Rollback**: Implement rollback mechanisms
+
+✅ **Good Release Management:**
+```bash
+#!/bin/bash
+# release-all-platforms.sh
+
+set -e
+
+VERSION=$1
+if [ -z "$VERSION" ]; then
+    echo "Usage: $0 <version>"
+    exit 1
+fi
+
+echo "Releasing Pulse Timer version $VERSION"
+
+# Update version in pubspec.yaml
+sed -i "s/version: .*/version: $VERSION/" pubspec.yaml
+
+# Commit version change
+git add pubspec.yaml
+git commit -m "Release version $VERSION"
+git tag "v$VERSION"
+git push origin main
+git push origin "v$VERSION"
+
+# Create GitHub release
+gh release create "v$VERSION" \
+  --title "Pulse Timer $VERSION" \
+  --notes "Release notes for version $VERSION" \
+  --latest
+
+echo "Release $VERSION created successfully!"
+```
+
+## Exceptions
+- Platform-specific builds may require manual intervention
+- Emergency releases can bypass certain quality gates
+- Beta releases can skip certain platforms

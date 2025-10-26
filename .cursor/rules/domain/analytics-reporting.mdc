@@ -1,0 +1,387 @@
+---
+description: Enforce analytics and reporting patterns for Pulse Pomodoro timer productivity insights
+globs:
+  - 'lib/domain/usecases/analytics/**/*.dart'
+  - 'lib/presentation/pages/analytics/**/*.dart'
+  - 'lib/data/repositories/analytics/**/*.dart'
+alwaysApply: true
+priority: medium
+---
+
+# Analytics & Reporting
+
+## Objective
+Implement comprehensive analytics and reporting system for the Pulse Pomodoro timer, providing productivity insights through heatmaps, achievements, and statistical analysis.
+
+## Context
+- Productivity analytics for Pomodoro sessions
+- Heatmap visualization of focus patterns
+- Achievement system with gamification
+- Statistical analysis of work patterns
+- Data privacy and user consent
+
+## Rules
+
+### Heatmap Implementation
+- **Data Structure**: Store daily Pomodoro completion data
+- **Visualization**: Create calendar-style heatmap grid
+- **Time Blocks**: Track focus sessions by hour and day
+- **Color Coding**: Use intensity-based color scheme
+
+✅ **Good Heatmap Data Structure:**
+```dart
+class HeatmapData {
+  final Map<String, int> dailySessions; // "2024-01-15" -> session count
+  final Map<String, Map<int, int>> hourlySessions; // "2024-01-15" -> {hour: count}
+  final DateTime startDate;
+  final DateTime endDate;
+  
+  const HeatmapData({
+    required this.dailySessions,
+    required this.hourlySessions,
+    required this.startDate,
+    required this.endDate,
+  });
+  
+  int getSessionCountForDate(DateTime date) {
+    final dateKey = DateFormat('yyyy-MM-dd').format(date);
+    return dailySessions[dateKey] ?? 0;
+  }
+  
+  int getSessionCountForHour(DateTime date, int hour) {
+    final dateKey = DateFormat('yyyy-MM-dd').format(date);
+    return hourlySessions[dateKey]?[hour] ?? 0;
+  }
+  
+  List<HeatmapCell> getHeatmapCells() {
+    final cells = <HeatmapCell>[];
+    final currentDate = startDate;
+    
+    while (currentDate.isBefore(endDate) || currentDate.isAtSameMomentAs(endDate)) {
+      final sessionCount = getSessionCountForDate(currentDate);
+      cells.add(HeatmapCell(
+        date: currentDate,
+        sessionCount: sessionCount,
+        intensity: _calculateIntensity(sessionCount),
+      ));
+      currentDate = currentDate.add(const Duration(days: 1));
+    }
+    
+    return cells;
+  }
+  
+  double _calculateIntensity(int sessionCount) {
+    if (sessionCount == 0) return 0.0;
+    if (sessionCount <= 2) return 0.2;
+    if (sessionCount <= 4) return 0.4;
+    if (sessionCount <= 6) return 0.6;
+    if (sessionCount <= 8) return 0.8;
+    return 1.0;
+  }
+}
+
+class HeatmapCell {
+  final DateTime date;
+  final int sessionCount;
+  final double intensity;
+  
+  const HeatmapCell({
+    required this.date,
+    required this.sessionCount,
+    required this.intensity,
+  });
+}
+```
+
+### Achievement System
+- **Achievement Categories**: Consistency, Volume, Discipline
+- **Achievement Rules**: Define clear criteria for each achievement
+- **Progress Tracking**: Track progress toward achievements
+- **Notification System**: Notify users of new achievements
+
+✅ **Good Achievement System:**
+```dart
+abstract class Achievement {
+  final String id;
+  final String name;
+  final String description;
+  final String iconName;
+  final AchievementCategory category;
+  final AchievementRarity rarity;
+  
+  const Achievement({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.iconName,
+    required this.category,
+    required this.rarity,
+  });
+  
+  Future<bool> isUnlocked(List<PomodoroSession> sessions);
+  Future<double> getProgress(List<PomodoroSession> sessions);
+}
+
+class ConsistencyAchievement extends Achievement {
+  const ConsistencyAchievement({
+    required String id,
+    required String name,
+    required String description,
+    required String iconName,
+    required AchievementRarity rarity,
+  }) : super(
+    id: id,
+    name: name,
+    description: description,
+    iconName: iconName,
+    category: AchievementCategory.consistency,
+    rarity: rarity,
+  );
+}
+
+class DailyStreakAchievement extends ConsistencyAchievement {
+  const DailyStreakAchievement() : super(
+    id: 'daily_streak_7',
+    name: 'Week Warrior',
+    description: 'Complete Pomodoro sessions for 7 consecutive days',
+    iconName: 'fire',
+    rarity: AchievementRarity.rare,
+  );
+  
+  @override
+  Future<bool> isUnlocked(List<PomodoroSession> sessions) async {
+    return await getProgress(sessions) >= 1.0;
+  }
+  
+  @override
+  Future<double> getProgress(List<PomodoroSession> sessions) async {
+    final dailySessions = _groupSessionsByDay(sessions);
+    final sortedDays = dailySessions.keys.toList()..sort();
+    
+    int currentStreak = 0;
+    int maxStreak = 0;
+    DateTime? lastDate;
+    
+    for (final day in sortedDays) {
+      if (dailySessions[day]!.isNotEmpty) {
+        if (lastDate == null || day.difference(lastDate).inDays == 1) {
+          currentStreak++;
+          maxStreak = math.max(maxStreak, currentStreak);
+        } else {
+          currentStreak = 1;
+        }
+        lastDate = day;
+      } else {
+        currentStreak = 0;
+      }
+    }
+    
+    return math.min(maxStreak / 7.0, 1.0);
+  }
+  
+  Map<DateTime, List<PomodoroSession>> _groupSessionsByDay(List<PomodoroSession> sessions) {
+    final Map<DateTime, List<PomodoroSession>> grouped = {};
+    
+    for (final session in sessions) {
+      final day = DateTime(session.completedAt.year, session.completedAt.month, session.completedAt.day);
+      grouped.putIfAbsent(day, () => []).add(session);
+    }
+    
+    return grouped;
+  }
+}
+
+class AchievementService {
+  final List<Achievement> _achievements = [
+    const DailyStreakAchievement(),
+    const WeeklyStreakAchievement(),
+    const MonthlyStreakAchievement(),
+    const FirstPomodoroAchievement(),
+    const HundredPomodoroAchievement(),
+    const FocusMasterAchievement(),
+  ];
+  
+  Future<List<UnlockedAchievement>> checkAchievements(List<PomodoroSession> sessions) async {
+    final unlockedAchievements = <UnlockedAchievement>[];
+    
+    for (final achievement in _achievements) {
+      if (await achievement.isUnlocked(sessions)) {
+        unlockedAchievements.add(UnlockedAchievement(
+          achievement: achievement,
+          unlockedAt: DateTime.now(),
+        ));
+      }
+    }
+    
+    return unlockedAchievements;
+  }
+}
+```
+
+### Statistical Analysis
+- **Focus Metrics**: Calculate average focus time, peak hours, etc.
+- **Productivity Trends**: Track productivity over time
+- **Task Analysis**: Analyze time spent on different tasks/projects
+- **Break Patterns**: Analyze break patterns and effectiveness
+
+✅ **Good Statistical Analysis:**
+```dart
+class ProductivityAnalytics {
+  final List<PomodoroSession> sessions;
+  
+  ProductivityAnalytics(this.sessions);
+  
+  FocusMetrics calculateFocusMetrics() {
+    if (sessions.isEmpty) {
+      return FocusMetrics.empty();
+    }
+    
+    final completedSessions = sessions.where((s) => s.isCompleted).toList();
+    final totalFocusTime = completedSessions.fold<Duration>(
+      Duration.zero,
+      (sum, session) => sum + session.duration,
+    );
+    
+    final averageSessionLength = totalFocusTime.inMinutes / completedSessions.length;
+    final peakHours = _calculatePeakHours(completedSessions);
+    final weeklyTrend = _calculateWeeklyTrend(completedSessions);
+    
+    return FocusMetrics(
+      totalSessions: completedSessions.length,
+      totalFocusTime: totalFocusTime,
+      averageSessionLength: Duration(minutes: averageSessionLength.round()),
+      peakHours: peakHours,
+      weeklyTrend: weeklyTrend,
+      completionRate: completedSessions.length / sessions.length,
+    );
+  }
+  
+  List<int> _calculatePeakHours(List<PomodoroSession> sessions) {
+    final hourCounts = <int, int>{};
+    
+    for (final session in sessions) {
+      final hour = session.completedAt.hour;
+      hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
+    }
+    
+    final sortedHours = hourCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    
+    return sortedHours.take(3).map((e) => e.key).toList();
+  }
+  
+  Map<String, double> _calculateWeeklyTrend(List<PomodoroSession> sessions) {
+    final weeklyData = <String, int>{};
+    
+    for (final session in sessions) {
+      final weekKey = DateFormat('yyyy-MM-dd').format(
+        session.completedAt.subtract(Duration(days: session.completedAt.weekday - 1)),
+      );
+      weeklyData[weekKey] = (weeklyData[weekKey] ?? 0) + 1;
+    }
+    
+    return weeklyData.map((key, value) => MapEntry(key, value.toDouble()));
+  }
+}
+
+class FocusMetrics {
+  final int totalSessions;
+  final Duration totalFocusTime;
+  final Duration averageSessionLength;
+  final List<int> peakHours;
+  final Map<String, double> weeklyTrend;
+  final double completionRate;
+  
+  const FocusMetrics({
+    required this.totalSessions,
+    required this.totalFocusTime,
+    required this.averageSessionLength,
+    required this.peakHours,
+    required this.weeklyTrend,
+    required this.completionRate,
+  });
+  
+  factory FocusMetrics.empty() {
+    return const FocusMetrics(
+      totalSessions: 0,
+      totalFocusTime: Duration.zero,
+      averageSessionLength: Duration.zero,
+      peakHours: [],
+      weeklyTrend: {},
+      completionRate: 0.0,
+    );
+  }
+}
+```
+
+### Data Privacy & Consent
+- **User Consent**: Obtain explicit consent for data collection
+- **Data Anonymization**: Anonymize personal data in analytics
+- **Data Retention**: Implement data retention policies
+- **Export/Delete**: Allow users to export or delete their data
+
+✅ **Good Privacy Implementation:**
+```dart
+class PrivacyService {
+  static const String _consentKey = 'analytics_consent';
+  static const String _dataRetentionKey = 'data_retention_days';
+  
+  Future<bool> hasUserConsent() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_consentKey) ?? false;
+  }
+  
+  Future<void> requestConsent() async {
+    // Show consent dialog
+    final consent = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Analytics Consent'),
+        content: const Text(
+          'We would like to collect anonymous usage data to improve your experience. '
+          'This includes session completion times, focus patterns, and app usage statistics. '
+          'No personal information or task content will be collected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Decline'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+    
+    if (consent != null) {
+      await setUserConsent(consent);
+    }
+  }
+  
+  Future<void> setUserConsent(bool consent) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_consentKey, consent);
+    
+    if (!consent) {
+      await clearAnalyticsData();
+    }
+  }
+  
+  Future<void> clearAnalyticsData() async {
+    // Clear all analytics data
+    await analyticsRepository.clearAllData();
+  }
+  
+  Future<void> exportUserData() async {
+    final userData = await analyticsRepository.exportUserData();
+    // Implement data export logic
+  }
+}
+```
+
+## Exceptions
+- Analytics can be disabled by user preference
+- Debug mode can bypass privacy restrictions for testing
+- Emergency data export can be triggered by support requests

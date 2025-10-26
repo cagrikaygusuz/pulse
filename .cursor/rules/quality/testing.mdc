@@ -1,0 +1,472 @@
+---
+description: Enforce comprehensive testing patterns for Pulse Pomodoro timer
+globs:
+  - 'test/**/*.dart'
+  - 'lib/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Testing Standards
+
+## Objective
+Implement comprehensive testing strategy for the Pulse Pomodoro timer with unit tests, widget tests, and integration tests ensuring reliability and maintainability.
+
+## Context
+- Flutter cross-platform Pomodoro timer
+- BLoC/Cubit state management testing
+- Firebase integration testing
+- Offline-first functionality testing
+- Multi-platform compatibility testing
+
+## Rules
+
+### Test Structure
+- **Mirror Structure**: Mirror lib structure in test directory
+- **Test Categories**: Unit, Widget, Integration, and Golden tests
+- **Test Naming**: Use descriptive test names with `test_` prefix
+- **Test Organization**: Group related tests in test suites
+
+✅ **Good Test Structure:**
+```
+test/
+├── unit/
+│   ├── domain/
+│   │   ├── entities/
+│   │   ├── usecases/
+│   │   └── repositories/
+│   ├── data/
+│   │   ├── repositories/
+│   │   └── datasources/
+│   └── presentation/
+│       ├── bloc/
+│       └── cubit/
+├── widget/
+│   ├── pages/
+│   └── widgets/
+├── integration/
+│   ├── timer_flow_test.dart
+│   └── task_management_test.dart
+└── fixtures/
+    ├── pomodoro_session_fixture.dart
+    └── task_fixture.dart
+```
+
+### Unit Testing
+- **BLoC/Cubit Tests**: Test state transitions and business logic
+- **Repository Tests**: Test data layer with mocked dependencies
+- **Use Case Tests**: Test domain logic in isolation
+- **Model Tests**: Test data models and serialization
+
+✅ **Good BLoC Unit Test:**
+```dart
+import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/mockito.dart';
+
+import 'package:pulse/domain/entities/pomodoro_session.dart';
+import 'package:pulse/presentation/bloc/timer/timer_bloc.dart';
+import 'package:pulse/presentation/bloc/timer/timer_event.dart';
+import 'package:pulse/presentation/bloc/timer/timer_state.dart';
+
+class MockTaskRepository extends Mock implements TaskRepository {}
+class MockSessionRepository extends Mock implements SessionRepository {}
+
+void main() {
+  group('TimerBloc', () {
+    late TimerBloc timerBloc;
+    late MockTaskRepository mockTaskRepository;
+    late MockSessionRepository mockSessionRepository;
+    
+    setUp(() {
+      mockTaskRepository = MockTaskRepository();
+      mockSessionRepository = MockSessionRepository();
+      timerBloc = TimerBloc(
+        taskRepository: mockTaskRepository,
+        sessionRepository: mockSessionRepository,
+      );
+    });
+    
+    tearDown(() {
+      timerBloc.close();
+    });
+    
+    group('StartTimerEvent', () {
+      const taskId = 'test-task-id';
+      const taskName = 'Test Task';
+      final task = TaskFixture.createTask(id: taskId, name: taskName);
+      
+      blocTest<TimerBloc, TimerState>(
+        'emits TimerRunningState when timer starts successfully',
+        build: () {
+          when(mockTaskRepository.getTask(taskId))
+              .thenAnswer((_) async => task);
+          when(mockSessionRepository.createSession(any))
+              .thenAnswer((_) async => const PomodoroSession());
+          return timerBloc;
+        },
+        act: (bloc) => bloc.add(StartTimerEvent(taskId: taskId)),
+        expect: () => [
+          isA<TimerLoadingState>(),
+          isA<TimerRunningState>()
+              .having((state) => state.taskId, 'taskId', taskId)
+              .having((state) => state.taskName, 'taskName', taskName),
+        ],
+        verify: (_) {
+          verify(mockTaskRepository.getTask(taskId)).called(1);
+          verify(mockSessionRepository.createSession(any)).called(1);
+        },
+      );
+      
+      blocTest<TimerBloc, TimerState>(
+        'emits TimerErrorState when task not found',
+        build: () {
+          when(mockTaskRepository.getTask(taskId))
+              .thenAnswer((_) async => null);
+          return timerBloc;
+        },
+        act: (bloc) => bloc.add(StartTimerEvent(taskId: taskId)),
+        expect: () => [
+          isA<TimerLoadingState>(),
+          isA<TimerErrorState>()
+              .having((state) => state.message, 'message', contains('Task not found')),
+        ],
+      );
+      
+      blocTest<TimerBloc, TimerState>(
+        'emits TimerErrorState when timer is already running',
+        build: () {
+          when(mockTaskRepository.getTask(taskId))
+              .thenAnswer((_) async => task);
+          return timerBloc;
+        },
+        seed: () => TimerRunningState(
+          remainingTime: const Duration(minutes: 25),
+          taskId: 'other-task-id',
+          taskName: 'Other Task',
+          startTime: DateTime.now(),
+          sessionType: SessionType.work,
+        ),
+        act: (bloc) => bloc.add(StartTimerEvent(taskId: taskId)),
+        expect: () => [
+          isA<TimerErrorState>()
+              .having((state) => state.message, 'message', contains('Timer is already running')),
+        ],
+      );
+    });
+    
+    group('PauseTimerEvent', () {
+      blocTest<TimerBloc, TimerState>(
+        'emits TimerPausedState when timer is running',
+        build: () => timerBloc,
+        seed: () => TimerRunningState(
+          remainingTime: const Duration(minutes: 20),
+          taskId: 'test-task-id',
+          taskName: 'Test Task',
+          startTime: DateTime.now(),
+          sessionType: SessionType.work,
+        ),
+        act: (bloc) => bloc.add(PauseTimerEvent()),
+        expect: () => [
+          isA<TimerPausedState>()
+              .having((state) => state.remainingTime, 'remainingTime', const Duration(minutes: 20))
+              .having((state) => state.taskId, 'taskId', 'test-task-id'),
+        ],
+      );
+      
+      blocTest<TimerBloc, TimerState>(
+        'emits TimerErrorState when timer is not running',
+        build: () => timerBloc,
+        seed: () => TimerInitialState(),
+        act: (bloc) => bloc.add(PauseTimerEvent()),
+        expect: () => [
+          isA<TimerErrorState>()
+              .having((state) => state.message, 'message', contains('No active timer to pause')),
+        ],
+      );
+    });
+  });
+}
+```
+
+### Widget Testing
+- **Widget Isolation**: Test widgets in isolation with mocked dependencies
+- **User Interactions**: Test user interactions and state changes
+- **Accessibility**: Test accessibility features and semantics
+- **Responsive Design**: Test responsive layouts
+
+✅ **Good Widget Test:**
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:mockito/mockito.dart';
+
+import 'package:pulse/presentation/pages/timer_page.dart';
+import 'package:pulse/presentation/bloc/timer/timer_bloc.dart';
+import 'package:pulse/presentation/bloc/timer/timer_state.dart';
+
+class MockTimerBloc extends MockBloc<TimerEvent, TimerState> implements TimerBloc {}
+
+void main() {
+  group('TimerPage', () {
+    late MockTimerBloc mockTimerBloc;
+    
+    setUp(() {
+      mockTimerBloc = MockTimerBloc();
+    });
+    
+    tearDown(() {
+      mockTimerBloc.close();
+    });
+    
+    Widget createWidgetUnderTest() {
+      return MaterialApp(
+        home: BlocProvider<TimerBloc>(
+          create: (_) => mockTimerBloc,
+          child: const TimerPage(),
+        ),
+      );
+    }
+    
+    testWidgets('displays initial state correctly', (WidgetTester tester) async {
+      when(mockTimerBloc.state).thenReturn(TimerInitialState());
+      
+      await tester.pumpWidget(createWidgetUnderTest());
+      
+      expect(find.text('Start Focus Session'), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+      expect(find.text('25:00'), findsOneWidget);
+    });
+    
+    testWidgets('displays running state correctly', (WidgetTester tester) async {
+      when(mockTimerBloc.state).thenReturn(TimerRunningState(
+        remainingTime: const Duration(minutes: 20, seconds: 30),
+        taskId: 'test-task-id',
+        taskName: 'Test Task',
+        startTime: DateTime.now(),
+        sessionType: SessionType.work,
+      ));
+      
+      await tester.pumpWidget(createWidgetUnderTest());
+      
+      expect(find.text('20:30'), findsOneWidget);
+      expect(find.text('Test Task'), findsOneWidget);
+      expect(find.byIcon(Icons.pause), findsOneWidget);
+      expect(find.byIcon(Icons.stop), findsOneWidget);
+    });
+    
+    testWidgets('calls start timer when start button is pressed', (WidgetTester tester) async {
+      when(mockTimerBloc.state).thenReturn(TimerInitialState());
+      
+      await tester.pumpWidget(createWidgetUnderTest());
+      
+      await tester.tap(find.byIcon(Icons.play_arrow));
+      
+      verify(mockTimerBloc.add(any)).called(1);
+    });
+    
+    testWidgets('displays error message when in error state', (WidgetTester tester) async {
+      when(mockTimerBloc.state).thenReturn(TimerErrorState(
+        message: 'Test error message',
+      ));
+      
+      await tester.pumpWidget(createWidgetUnderTest());
+      
+      expect(find.text('Test error message'), findsOneWidget);
+      expect(find.byIcon(Icons.error), findsOneWidget);
+    });
+    
+    testWidgets('has proper accessibility semantics', (WidgetTester tester) async {
+      when(mockTimerBloc.state).thenReturn(TimerInitialState());
+      
+      await tester.pumpWidget(createWidgetUnderTest());
+      
+      final startButton = find.byIcon(Icons.play_arrow);
+      expect(tester.getSemantics(startButton), findsOneWidget);
+      
+      // Test accessibility labels
+      expect(find.bySemanticsLabel('Start timer'), findsOneWidget);
+    });
+  });
+}
+```
+
+### Integration Testing
+- **End-to-End Flows**: Test complete user workflows
+- **Cross-Platform**: Test on multiple platforms
+- **Real Dependencies**: Use real repositories and services
+- **Performance**: Test performance under load
+
+✅ **Good Integration Test:**
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:pulse/main.dart' as app;
+
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  
+  group('Timer Flow Integration Tests', () {
+    testWidgets('complete pomodoro session flow', (WidgetTester tester) async {
+      app.main();
+      await tester.pumpAndSettle();
+      
+      // Navigate to timer page
+      await tester.tap(find.text('Start Timer'));
+      await tester.pumpAndSettle();
+      
+      // Select a task
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Test Task').first);
+      await tester.pumpAndSettle();
+      
+      // Start timer
+      await tester.tap(find.byIcon(Icons.play_arrow));
+      await tester.pumpAndSettle();
+      
+      // Verify timer is running
+      expect(find.text('Test Task'), findsOneWidget);
+      expect(find.byIcon(Icons.pause), findsOneWidget);
+      
+      // Wait for timer to complete (or skip for testing)
+      await tester.tap(find.byIcon(Icons.stop));
+      await tester.pumpAndSettle();
+      
+      // Verify completion
+      expect(find.text('Session Completed'), findsOneWidget);
+    });
+    
+    testWidgets('task management flow', (WidgetTester tester) async {
+      app.main();
+      await tester.pumpAndSettle();
+      
+      // Navigate to tasks page
+      await tester.tap(find.text('Tasks'));
+      await tester.pumpAndSettle();
+      
+      // Create new task
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      
+      await tester.enterText(find.byType(TextFormField), 'New Test Task');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      
+      // Verify task was created
+      expect(find.text('New Test Task'), findsOneWidget);
+      
+      // Edit task
+      await tester.tap(find.text('New Test Task'));
+      await tester.pumpAndSettle();
+      
+      await tester.tap(find.byIcon(Icons.edit));
+      await tester.pumpAndSettle();
+      
+      await tester.enterText(find.byType(TextFormField), 'Updated Test Task');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      
+      // Verify task was updated
+      expect(find.text('Updated Test Task'), findsOneWidget);
+    });
+  });
+}
+```
+
+### Test Fixtures
+- **Data Factories**: Create test data factories for consistent test data
+- **Mock Objects**: Create reusable mock objects
+- **Test Utilities**: Create utility functions for common test operations
+
+✅ **Good Test Fixtures:**
+```dart
+class TaskFixture {
+  static Task createTask({
+    String? id,
+    String? name,
+    String? projectId,
+    Duration? estimatedDuration,
+    TaskStatus? status,
+  }) {
+    return Task(
+      id: id ?? 'test-task-id',
+      projectId: projectId ?? 'test-project-id',
+      name: name ?? 'Test Task',
+      description: 'Test task description',
+      estimatedDuration: estimatedDuration ?? const Duration(minutes: 25),
+      sortOrder: 0,
+      status: status ?? TaskStatus.pending,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+  }
+  
+  static List<Task> createTaskList(int count) {
+    return List.generate(count, (index) => createTask(
+      id: 'task-$index',
+      name: 'Test Task $index',
+    ));
+  }
+}
+
+class PomodoroSessionFixture {
+  static PomodoroSession createSession({
+    String? id,
+    String? taskId,
+    SessionType? sessionType,
+    Duration? duration,
+    bool? isCompleted,
+  }) {
+    return PomodoroSession(
+      id: id ?? 'test-session-id',
+      taskId: taskId ?? 'test-task-id',
+      sessionType: sessionType ?? SessionType.work,
+      startTime: DateTime.now().subtract(const Duration(minutes: 10)),
+      completedAt: DateTime.now(),
+      duration: duration ?? const Duration(minutes: 25),
+      isCompleted: isCompleted ?? true,
+      createdAt: DateTime.now(),
+    );
+  }
+  
+  static List<PomodoroSession> createSessionList(int count) {
+    return List.generate(count, (index) => createSession(
+      id: 'session-$index',
+      taskId: 'task-$index',
+    ));
+  }
+}
+
+class MockRepositories {
+  static MockTaskRepository createMockTaskRepository() {
+    final mock = MockTaskRepository();
+    when(mock.getTasks(any)).thenAnswer((_) async => TaskFixture.createTaskList(3));
+    when(mock.getTask(any)).thenAnswer((_) async => TaskFixture.createTask());
+    when(mock.createTask(any)).thenAnswer((_) async => TaskFixture.createTask());
+    when(mock.updateTask(any)).thenAnswer((_) async => TaskFixture.createTask());
+    when(mock.deleteTask(any)).thenAnswer((_) async => true);
+    return mock;
+  }
+  
+  static MockSessionRepository createMockSessionRepository() {
+    final mock = MockSessionRepository();
+    when(mock.getSessions(any)).thenAnswer((_) async => PomodoroSessionFixture.createSessionList(5));
+    when(mock.createSession(any)).thenAnswer((_) async => PomodoroSessionFixture.createSession());
+    when(mock.updateSession(any)).thenAnswer((_) async => PomodoroSessionFixture.createSession());
+    return mock;
+  }
+}
+```
+
+### Test Coverage
+- **Coverage Goals**: Maintain minimum 80% code coverage
+- **Critical Paths**: Ensure 100% coverage for critical business logic
+- **Edge Cases**: Test edge cases and error conditions
+- **Coverage Reports**: Generate and review coverage reports
+
+## Exceptions
+- Generated code (e.g., `*.g.dart`) can be excluded from coverage
+- Platform-specific code may require platform-specific tests
+- Integration tests can be run less frequently than unit tests

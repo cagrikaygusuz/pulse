@@ -1,0 +1,141 @@
+---
+description: Enforce consistent naming conventions for Dart/Flutter code in Pulse project
+globs:
+  - 'lib/**/*.dart'
+  - 'test/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Naming Conventions
+
+## Objective
+Maintain consistent naming patterns across the Pulse codebase for better readability and maintainability.
+
+## Context
+- Dart/Flutter development with BLoC pattern
+- Cross-platform Pomodoro timer application
+- Firebase integration with offline-first approach
+- Multi-language support (EN/TR)
+
+## Rules
+
+### Classes and Types
+- **Classes**: `PascalCase` (e.g., `PomodoroSession`, `TimerCubit`)
+- **Enums**: `PascalCase` (e.g., `TimerState`, `SessionType`)
+- **Mixins**: `PascalCase` with `Mixin` suffix (e.g., `TimerMixin`)
+- **Extensions**: `PascalCase` with `Extension` suffix (e.g., `DurationExtension`)
+
+✅ **Good Examples:**
+```dart
+class PomodoroSession {
+  final String id;
+  final Duration duration;
+  final SessionType type;
+}
+
+enum SessionType { work, shortBreak, longBreak }
+
+mixin TimerMixin {
+  void startTimer() {}
+}
+```
+
+### Variables and Functions
+- **Variables**: `camelCase` (e.g., `currentSession`, `isTimerRunning`)
+- **Functions**: `camelCase` (e.g., `startPomodoro()`, `calculateFocusTime()`)
+- **Private members**: `_camelCase` (e.g., `_timerController`, `_sessionDuration`)
+- **Constants**: `camelCase` for local, `SCREAMING_SNAKE_CASE` for global
+
+✅ **Good Examples:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  static const int DEFAULT_POMODORO_DURATION = 25;
+  
+  Timer? _timerController;
+  Duration _sessionDuration = Duration(minutes: 25);
+  
+  void startPomodoro() {
+    _timerController = Timer.periodic(Duration(seconds: 1), _tick);
+  }
+  
+  void _tick(Timer timer) {
+    // Implementation
+  }
+}
+```
+
+### Files and Directories
+- **Files**: `snake_case.dart` (e.g., `pomodoro_session.dart`, `timer_cubit.dart`)
+- **Directories**: `snake_case` (e.g., `presentation/bloc/`, `domain/usecases/`)
+- **Assets**: `snake_case` (e.g., `images/pomodoro_icon.png`, `fonts/inter_regular.ttf`)
+
+### BLoC/Cubit Specific
+- **Events**: `PascalCase` with `Event` suffix (e.g., `StartTimerEvent`, `PauseTimerEvent`)
+- **States**: `PascalCase` with `State` suffix (e.g., `TimerInitialState`, `TimerRunningState`)
+- **Cubit**: `PascalCase` with `Cubit` suffix (e.g., `TimerCubit`, `TaskCubit`)
+- **BLoC**: `PascalCase` with `Bloc` suffix (e.g., `AnalyticsBloc`, `AuthBloc`)
+
+✅ **Good BLoC Pattern:**
+```dart
+// Events
+abstract class TimerEvent extends Equatable {}
+
+class StartTimerEvent extends TimerEvent {
+  final String taskId;
+  const StartTimerEvent(this.taskId);
+  
+  @override
+  List<Object?> get props => [taskId];
+}
+
+// States
+abstract class TimerState extends Equatable {}
+
+class TimerRunningState extends TimerState {
+  final Duration remainingTime;
+  final String taskId;
+  
+  const TimerRunningState({
+    required this.remainingTime,
+    required this.taskId,
+  });
+  
+  @override
+  List<Object?> get props => [remainingTime, taskId];
+}
+
+// BLoC
+class TimerBloc extends Bloc<TimerEvent, TimerState> {
+  TimerBloc() : super(TimerInitialState());
+}
+```
+
+### Database and API
+- **Firestore Collections**: `snake_case` (e.g., `pomodoro_sessions`, `user_tasks`)
+- **Isar Collections**: `PascalCase` (e.g., `PomodoroSession`, `UserTask`)
+- **API Endpoints**: `snake_case` (e.g., `/api/v1/pomodoro-sessions`)
+
+### Localization Keys
+- **Keys**: `snake_case` with descriptive prefixes (e.g., `timer_start_button`, `task_completion_message`)
+- **Files**: `snake_case` with language suffix (e.g., `en.json`, `tr.json`)
+
+✅ **Good Localization:**
+```json
+{
+  "timer": {
+    "start_button": "Start Focus Session",
+    "pause_button": "Pause",
+    "skip_button": "Skip Session"
+  },
+  "task": {
+    "completion_message": "Task completed successfully!",
+    "estimated_duration": "Estimated Duration"
+  }
+}
+```
+
+## Exceptions
+- Generated code (e.g., `*.g.dart`, `*.freezed.dart`) follows code generation conventions
+- Platform-specific code may follow platform conventions (e.g., iOS Swift naming)
+- Third-party package APIs should maintain their original naming conventions

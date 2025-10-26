@@ -1,0 +1,421 @@
+---
+description: Enforce performance optimization patterns for Pulse Pomodoro timer
+globs:
+  - 'lib/**/*.dart'
+alwaysApply: true
+priority: medium
+---
+
+# Performance Optimization
+
+## Objective
+Implement performance optimization patterns for the Pulse Pomodoro timer to ensure smooth animations, efficient memory usage, and responsive UI across all platforms.
+
+## Context
+- Cross-platform Flutter Pomodoro timer
+- Real-time countdown animations
+- Custom paint widgets for visual countdown
+- Offline-first data synchronization
+- Multi-platform deployment
+
+## Rules
+
+### Widget Performance
+- **Const Constructors**: Use `const` constructors whenever possible
+- **RepaintBoundary**: Wrap expensive widgets in `RepaintBoundary`
+- **AutomaticKeepAliveClientMixin**: Use for state preservation
+- **ListView Optimization**: Use `ListView.builder` for large lists
+
+✅ **Good Widget Performance:**
+```dart
+class OptimizedTimerWidget extends StatelessWidget {
+  const OptimizedTimerWidget({
+    super.key,
+    required this.remainingTime,
+    required this.isRunning,
+  });
+  
+  final Duration remainingTime;
+  final bool isRunning;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _animationController,
+        builder: (context, child) {
+          return CustomPaint(
+            painter: CountdownPainter(
+              progress: remainingTime.inSeconds / 1500.0, // 25 minutes
+              isRunning: isRunning,
+            ),
+            child: Center(
+              child: Text(
+                _formatDuration(remainingTime),
+                style: Theme.of(context).textTheme.headlineLarge,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class OptimizedTaskList extends StatelessWidget {
+  const OptimizedTaskList({
+    super.key,
+    required this.tasks,
+  });
+  
+  final List<Task> tasks;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      itemCount: tasks.length,
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        return RepaintBoundary(
+          child: TaskTile(
+            key: ValueKey(task.id),
+            task: task,
+          ),
+        );
+      },
+    );
+  }
+}
+```
+
+### Animation Performance
+- **AnimationController**: Use `SingleTickerProviderStateMixin` for single animations
+- **TickerProviderStateMixin**: Use for multiple animations
+- **Dispose Controllers**: Always dispose animation controllers
+- **Curve Optimization**: Use efficient curves for smooth animations
+
+✅ **Good Animation Performance:**
+```dart
+class SmoothCountdownAnimation extends StatefulWidget {
+  const SmoothCountdownAnimation({
+    super.key,
+    required this.duration,
+    required this.onComplete,
+  });
+  
+  final Duration duration;
+  final VoidCallback onComplete;
+
+  @override
+  State<SmoothCountdownAnimation> createState() => _SmoothCountdownAnimationState();
+}
+
+class _SmoothCountdownAnimationState extends State<SmoothCountdownAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: widget.duration,
+      vsync: this,
+    );
+    
+    _animation = Tween<double>(
+      begin: 1.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.linear,
+    ));
+    
+    _startCountdown();
+  }
+
+  void _startCountdown() {
+    _controller.forward();
+    
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!_controller.isAnimating) {
+        timer.cancel();
+        widget.onComplete();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return CustomPaint(
+          painter: CountdownPainter(progress: _animation.value),
+          child: Center(
+            child: Text(
+              _formatRemainingTime(),
+              style: Theme.of(context).textTheme.headlineLarge,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+```
+
+### Memory Management
+- **Stream Subscriptions**: Always cancel stream subscriptions
+- **Timer Management**: Dispose timers properly
+- **Image Caching**: Use appropriate image caching strategies
+- **Memory Monitoring**: Monitor memory usage in debug mode
+
+✅ **Good Memory Management:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  Timer? _timer;
+  StreamSubscription? _connectivitySubscription;
+  
+  TimerCubit({
+    required this.connectivityService,
+  }) : super(TimerInitialState()) {
+    _connectivitySubscription = connectivityService.onConnectivityChanged.listen(
+      _onConnectivityChanged,
+    );
+  }
+  
+  void startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), _onTimerTick);
+  }
+  
+  void stopTimer() {
+    _timer?.cancel();
+    _timer = null;
+  }
+  
+  @override
+  Future<void> close() {
+    _timer?.cancel();
+    _connectivitySubscription?.cancel();
+    return super.close();
+  }
+}
+
+class ImageCacheManager {
+  static const int maxCacheSize = 100; // MB
+  
+  static void configureCache() {
+    PaintingBinding.instance.imageCache.maximumSizeBytes = maxCacheSize * 1024 * 1024;
+  }
+  
+  static void clearCache() {
+    PaintingBinding.instance.imageCache.clear();
+  }
+  
+  static void evictFromCache(String key) {
+    PaintingBinding.instance.imageCache.evict(key);
+  }
+}
+```
+
+### Database Performance
+- **Lazy Loading**: Load data on demand
+- **Pagination**: Implement pagination for large datasets
+- **Indexing**: Use proper database indexes
+- **Batch Operations**: Use batch operations for multiple writes
+
+✅ **Good Database Performance:**
+```dart
+class OptimizedTaskRepository {
+  final Isar _isar;
+  final int _pageSize = 20;
+  
+  OptimizedTaskRepository(this._isar);
+  
+  Future<List<Task>> getTasksPaginated({
+    required String projectId,
+    int page = 0,
+  }) async {
+    final query = _isar.tasks
+        .where()
+        .projectIdEqualTo(projectId)
+        .and()
+        .isArchivedEqualTo(false)
+        .sortBySortOrder();
+    
+    return await query
+        .offset(page * _pageSize)
+        .limit(_pageSize)
+        .findAll();
+  }
+  
+  Future<void> batchUpdateTasks(List<Task> tasks) async {
+    await _isar.writeTxn(() async {
+      for (final task in tasks) {
+        await _isar.tasks.put(task);
+      }
+    });
+  }
+  
+  Future<List<Task>> searchTasks(String query) async {
+    if (query.isEmpty) return [];
+    
+    return await _isar.tasks
+        .where()
+        .nameContains(query, caseSensitive: false)
+        .limit(50)
+        .findAll();
+  }
+}
+```
+
+### Network Performance
+- **Request Debouncing**: Debounce frequent requests
+- **Caching**: Implement proper caching strategies
+- **Compression**: Use compression for large payloads
+- **Connection Pooling**: Reuse connections when possible
+
+✅ **Good Network Performance:**
+```dart
+class OptimizedFirestoreService {
+  final FirebaseFirestore _firestore;
+  final Map<String, DateTime> _cacheTimestamps = {};
+  final Duration _cacheExpiry = const Duration(minutes: 5);
+  
+  OptimizedFirestoreService(this._firestore);
+  
+  Future<List<Task>> getTasksWithCache(String projectId) async {
+    final cacheKey = 'tasks_$projectId';
+    final now = DateTime.now();
+    
+    // Check cache validity
+    if (_cacheTimestamps.containsKey(cacheKey)) {
+      final cacheTime = _cacheTimestamps[cacheKey]!;
+      if (now.difference(cacheTime) < _cacheExpiry) {
+        return await _getFromLocalCache(cacheKey);
+      }
+    }
+    
+    // Fetch from remote
+    final tasks = await _fetchTasksFromRemote(projectId);
+    
+    // Update cache
+    await _saveToLocalCache(cacheKey, tasks);
+    _cacheTimestamps[cacheKey] = now;
+    
+    return tasks;
+  }
+  
+  Future<void> batchSyncTasks(List<Task> tasks) async {
+    final batch = _firestore.batch();
+    
+    for (final task in tasks) {
+      final docRef = _firestore.collection('tasks').doc(task.id);
+      batch.set(docRef, task.toFirestore());
+    }
+    
+    await batch.commit();
+  }
+}
+```
+
+### Platform-Specific Optimizations
+- **iOS**: Use Metal for custom paint operations
+- **Android**: Optimize for different screen densities
+- **Web**: Use Canvas API for custom paint
+- **Desktop**: Optimize for larger screen sizes
+
+✅ **Good Platform-Specific Optimization:**
+```dart
+class PlatformOptimizedPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (Platform.isIOS) {
+      _paintForIOS(canvas, size);
+    } else if (Platform.isAndroid) {
+      _paintForAndroid(canvas, size);
+    } else if (kIsWeb) {
+      _paintForWeb(canvas, size);
+    } else {
+      _paintForDesktop(canvas, size);
+    }
+  }
+  
+  void _paintForIOS(Canvas canvas, Size size) {
+    // iOS-specific optimizations
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+    
+    // Use Metal-optimized rendering
+    canvas.drawCircle(Offset.zero, size.width / 2, paint);
+  }
+  
+  void _paintForAndroid(Canvas canvas, Size size) {
+    // Android-specific optimizations
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeCap = StrokeCap.round;
+    
+    // Optimize for different screen densities
+    canvas.drawCircle(Offset.zero, size.width / 2, paint);
+  }
+}
+```
+
+### Performance Monitoring
+- **Performance Metrics**: Track key performance metrics
+- **Memory Usage**: Monitor memory usage patterns
+- **Frame Rate**: Monitor frame rate during animations
+- **Network Latency**: Track network performance
+
+✅ **Good Performance Monitoring:**
+```dart
+class PerformanceMonitor {
+  static final Map<String, Stopwatch> _timers = {};
+  
+  static void startTimer(String name) {
+    _timers[name] = Stopwatch()..start();
+  }
+  
+  static void endTimer(String name) {
+    final timer = _timers.remove(name);
+    if (timer != null) {
+      timer.stop();
+      debugPrint('$name took ${timer.elapsedMilliseconds}ms');
+    }
+  }
+  
+  static void trackMemoryUsage() {
+    if (kDebugMode) {
+      final info = ProcessInfo.currentRss;
+      debugPrint('Memory usage: ${info ~/ 1024 ~/ 1024} MB');
+    }
+  }
+  
+  static void trackFrameRate() {
+    if (kDebugMode) {
+      WidgetsBinding.instance.addPersistentFrameCallback((timeStamp) {
+        debugPrint('Frame rendered at: ${timeStamp.inMilliseconds}');
+      });
+    }
+  }
+}
+```
+
+## Exceptions
+- Debug mode can disable performance optimizations for easier debugging
+- Emergency situations can bypass performance constraints
+- Platform-specific limitations may require workarounds

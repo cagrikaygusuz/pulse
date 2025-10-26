@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 50 &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    function isValidTask(data) {
+      return data.keys().hasAll(['name', 'projectId', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 100 &&
+        data.projectId is string &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    function isValidSession(data) {
+      return data.keys().hasAll(['taskId', 'userId', 'startTime', 'createdAt']) &&
+        data.taskId is string &&
+        data.userId is string &&
+        data.startTime is timestamp &&
+        data.createdAt is timestamp;
+    }
+    
+    // User profiles
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // Projects
+    match /projects/{projectId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId &&
+        isValidProject(request.resource.data);
+    }
+    
+    // Tasks
+    match /tasks/{taskId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.userId &&
+        isValidTask(request.resource.data);
+    }
+    
+    // Pomodoro sessions
+    match /pomodoro_sessions/{sessionId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId &&
+        isValidSession(request.resource.data);
+    }
+    
+    // Achievements
+    match /achievements/{achievementId} {
+      allow read: if isAuthenticated() && 
+        request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // User settings
+    match /user_settings/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}

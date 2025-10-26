@@ -1,0 +1,204 @@
+---
+description: Enforce Dart/Flutter code style and formatting standards for Pulse project
+globs:
+  - 'lib/**/*.dart'
+  - 'test/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Code Style & Formatting
+
+## Objective
+Maintain consistent code style and formatting across the Pulse codebase for better readability and team collaboration.
+
+## Context
+- Dart/Flutter development with strict linting rules
+- Cross-platform Pomodoro timer application
+- Team development with code reviews
+- Automated formatting with `dart format`
+
+## Rules
+
+### Formatting
+- **Line Length**: Maximum 80 characters per line
+- **Indentation**: 2 spaces (no tabs)
+- **Trailing Commas**: Always use trailing commas in multi-line structures
+- **Braces**: Always use braces, even for single-line statements
+
+✅ **Good Formatting:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  TimerCubit({
+    required this.taskRepository,
+    required this.sessionRepository,
+  }) : super(TimerInitialState());
+
+  void startPomodoro({
+    required String taskId,
+    required Duration duration,
+  }) {
+    if (state is TimerInitialState) {
+      emit(TimerRunningState(
+        remainingTime: duration,
+        taskId: taskId,
+      ));
+    }
+  }
+}
+```
+
+❌ **Avoid:**
+```dart
+class TimerCubit extends Cubit<TimerState>{
+TimerCubit({required this.taskRepository,required this.sessionRepository}):super(TimerInitialState());
+void startPomodoro({required String taskId,required Duration duration}){
+if(state is TimerInitialState){emit(TimerRunningState(remainingTime:duration,taskId:taskId));}
+}
+}
+```
+
+### Documentation
+- **Public APIs**: Always document with `///` comments
+- **Complex Logic**: Add inline comments explaining business rules
+- **TODO Comments**: Use `TODO(username): description` format
+- **Deprecated Code**: Use `@deprecated` annotation with migration path
+
+✅ **Good Documentation:**
+```dart
+/// Manages Pomodoro timer state and transitions between work/break sessions.
+/// 
+/// This cubit handles the core Pomodoro technique implementation:
+/// - 25-minute work sessions
+/// - 5-minute short breaks
+/// - 15-minute long breaks after 4 work sessions
+class TimerCubit extends Cubit<TimerState> {
+  /// Starts a new Pomodoro session for the specified task.
+  /// 
+  /// Throws [TimerAlreadyRunningException] if timer is already active.
+  /// 
+  /// Parameters:
+  /// - [taskId]: The ID of the task to focus on
+  /// - [duration]: Custom duration override (optional)
+  void startPomodoro({
+    required String taskId,
+    Duration? duration,
+  }) {
+    // TODO(afeyz): Add validation for task existence
+    if (state is TimerRunningState) {
+      throw TimerAlreadyRunningException();
+    }
+    
+    // Implementation...
+  }
+}
+```
+
+### Error Handling
+- **Custom Exceptions**: Create specific exception classes
+- **Null Safety**: Use null-aware operators and explicit null checks
+- **Try-Catch**: Always handle specific exception types
+- **Logging**: Use structured logging for debugging
+
+✅ **Good Error Handling:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  Future<void> startPomodoro(String taskId) async {
+    try {
+      final task = await taskRepository.getTask(taskId);
+      if (task == null) {
+        throw TaskNotFoundException(taskId);
+      }
+      
+      emit(TimerRunningState(
+        remainingTime: task.estimatedDuration,
+        taskId: taskId,
+      ));
+    } on TaskNotFoundException catch (e) {
+      emit(TimerErrorState(message: e.message));
+    } on NetworkException catch (e) {
+      // Handle offline scenario
+      emit(TimerOfflineState(taskId: taskId));
+    } catch (e) {
+      logger.error('Unexpected error starting pomodoro', error: e);
+      emit(TimerErrorState(message: 'An unexpected error occurred'));
+    }
+  }
+}
+```
+
+### Constants and Magic Numbers
+- **Constants**: Define in dedicated files (e.g., `app_constants.dart`)
+- **Magic Numbers**: Avoid hardcoded values, use named constants
+- **Colors**: Use theme colors or named constants
+- **Durations**: Use `Duration` constructors with named parameters
+
+✅ **Good Constants Usage:**
+```dart
+// app_constants.dart
+class AppConstants {
+  static const Duration defaultPomodoroDuration = Duration(minutes: 25);
+  static const Duration shortBreakDuration = Duration(minutes: 5);
+  static const Duration longBreakDuration = Duration(minutes: 15);
+  static const int pomodorosBeforeLongBreak = 4;
+  
+  static const Color primaryAccent = Color(0xFFED6B06);
+  static const Color secondaryAccent = Color(0xFF9D1348);
+}
+
+// Usage
+void startPomodoro() {
+  emit(TimerRunningState(
+    remainingTime: AppConstants.defaultPomodoroDuration,
+    taskId: taskId,
+  ));
+}
+```
+
+### Widget Composition
+- **Single Responsibility**: Each widget should have one clear purpose
+- **Composition over Inheritance**: Prefer composition for reusable components
+- **Const Constructors**: Use `const` constructors whenever possible
+- **Extract Methods**: Extract complex build logic into separate methods
+
+✅ **Good Widget Composition:**
+```dart
+class TimerPage extends StatelessWidget {
+  const TimerPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _buildAppBar(context),
+      body: _buildBody(context),
+      floatingActionButton: _buildFloatingActionButton(context),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context) {
+    return AppBar(
+      title: const Text('Focus Session'),
+      backgroundColor: AppConstants.primaryAccent,
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    return BlocBuilder<TimerCubit, TimerState>(
+      builder: (context, state) {
+        return Column(
+          children: [
+            _buildVisualCountdown(state),
+            _buildTaskInfo(state),
+            _buildControls(state),
+          ],
+        );
+      },
+    );
+  }
+}
+```
+
+## Exceptions
+- Generated code (e.g., `*.g.dart`) may not follow all formatting rules
+- Platform-specific code may follow platform conventions
+- Legacy code migration can be gradual with `// ignore:` comments

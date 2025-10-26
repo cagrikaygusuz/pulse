@@ -1,0 +1,445 @@
+---
+description: Enforce task and project management patterns for Pulse Pomodoro timer
+globs:
+  - 'lib/domain/entities/task.dart'
+  - 'lib/domain/entities/project.dart'
+  - 'lib/domain/usecases/task/**/*.dart'
+  - 'lib/presentation/bloc/task/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Task & Project Management
+
+## Objective
+Implement hierarchical task management with proper project organization, drag-and-drop sorting, and mandatory task linking for Pomodoro sessions.
+
+## Context
+- Hierarchical structure: Project → Task → Subtask
+- Mandatory task selection before starting Pomodoro sessions
+- Drag-and-drop sorting with persistence
+- Estimated duration tracking for productivity analytics
+
+## Rules
+
+### Hierarchical Structure
+- **Project**: Top-level container for related tasks
+- **Task**: Individual work items with estimated duration
+- **Subtask**: Granular work items within tasks
+- **Relationships**: One-to-many relationships with proper foreign keys
+
+✅ **Good Entity Design:**
+```dart
+class Project {
+  final String id;
+  final String name;
+  final String? description;
+  final String userId;
+  final int sortOrder;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool isArchived;
+  
+  const Project({
+    required this.id,
+    required this.name,
+    this.description,
+    required this.userId,
+    required this.sortOrder,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isArchived = false,
+  });
+  
+  Project copyWith({
+    String? name,
+    String? description,
+    int? sortOrder,
+    bool? isArchived,
+  }) {
+    return Project(
+      id: id,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      userId: userId,
+      sortOrder: sortOrder ?? this.sortOrder,
+      createdAt: createdAt,
+      updatedAt: DateTime.now(),
+      isArchived: isArchived ?? this.isArchived,
+    );
+  }
+}
+
+class Task {
+  final String id;
+  final String projectId;
+  final String name;
+  final String? description;
+  final Duration estimatedDuration;
+  final Duration? actualDuration;
+  final int sortOrder;
+  final TaskStatus status;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final bool isArchived;
+  
+  const Task({
+    required this.id,
+    required this.projectId,
+    required this.name,
+    this.description,
+    required this.estimatedDuration,
+    this.actualDuration,
+    required this.sortOrder,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isArchived = false,
+  });
+  
+  bool get isCompleted => status == TaskStatus.completed;
+  bool get isInProgress => status == TaskStatus.inProgress;
+  
+  Task copyWith({
+    String? name,
+    String? description,
+    Duration? estimatedDuration,
+    Duration? actualDuration,
+    int? sortOrder,
+    TaskStatus? status,
+    bool? isArchived,
+  }) {
+    return Task(
+      id: id,
+      projectId: projectId,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      estimatedDuration: estimatedDuration ?? this.estimatedDuration,
+      actualDuration: actualDuration ?? this.actualDuration,
+      sortOrder: sortOrder ?? this.sortOrder,
+      status: status ?? this.status,
+      createdAt: createdAt,
+      updatedAt: DateTime.now(),
+      isArchived: isArchived ?? this.isArchived,
+    );
+  }
+}
+
+enum TaskStatus {
+  pending('Pending'),
+  inProgress('In Progress'),
+  completed('Completed'),
+  cancelled('Cancelled');
+  
+  const TaskStatus(this.displayName);
+  final String displayName;
+}
+```
+
+### Mandatory Task Linking
+- **Validation**: Enforce task selection before timer start
+- **UI Feedback**: Clear indication when no task is selected
+- **Task Context**: Display selected task information during timer
+- **Task Switching**: Prevent task switching during active sessions
+
+✅ **Good Task Linking Implementation:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  Future<void> startPomodoro({
+    required String taskId,
+    Duration? customDuration,
+  }) async {
+    // Validate task exists and is not completed
+    final task = await taskRepository.getTask(taskId);
+    if (task == null) {
+      throw TaskNotFoundException('Task not found: $taskId');
+    }
+    
+    if (task.isCompleted) {
+      throw TaskAlreadyCompletedException('Cannot start timer for completed task');
+    }
+    
+    if (task.isArchived) {
+      throw TaskArchivedException('Cannot start timer for archived task');
+    }
+    
+    // Update task status to in progress
+    await taskRepository.updateTask(
+      task.copyWith(status: TaskStatus.inProgress),
+    );
+    
+    // Start timer with task context
+    final duration = customDuration ?? task.estimatedDuration;
+    
+    emit(TimerRunningState(
+      remainingTime: duration,
+      taskId: taskId,
+      taskName: task.name,
+      projectId: task.projectId,
+      startTime: DateTime.now(),
+      sessionType: SessionType.work,
+    ));
+  }
+}
+
+class TaskSelectionWidget extends StatelessWidget {
+  final String? selectedTaskId;
+  final Function(String) onTaskSelected;
+  
+  const TaskSelectionWidget({
+    super.key,
+    this.selectedTaskId,
+    required this.onTaskSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<TaskCubit, TaskState>(
+      builder: (context, state) {
+        if (state is TaskLoadedState) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Select Task for Focus Session',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: selectedTaskId,
+                decoration: InputDecoration(
+                  hintText: 'Choose a task to focus on',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                items: state.tasks
+                    .where((task) => !task.isCompleted && !task.isArchived)
+                    .map((task) => DropdownMenuItem(
+                      value: task.id,
+                      child: Text(task.name),
+                    ))
+                    .toList(),
+                onChanged: (taskId) {
+                  if (taskId != null) {
+                    onTaskSelected(taskId);
+                  }
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please select a task before starting timer';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          );
+        }
+        return const CircularProgressIndicator();
+      },
+    );
+  }
+}
+```
+
+### Drag-and-Drop Sorting
+- **ReorderableListView**: Use Flutter's built-in reorderable list
+- **Sort Order Persistence**: Save sort order to both local and remote storage
+- **Visual Feedback**: Provide clear visual feedback during drag operations
+- **Accessibility**: Ensure drag-and-drop is accessible
+
+✅ **Good Drag-and-Drop Implementation:**
+```dart
+class TaskListWidget extends StatelessWidget {
+  final List<Task> tasks;
+  final Function(List<Task>) onTasksReordered;
+  
+  const TaskListWidget({
+    super.key,
+    required this.tasks,
+    required this.onTasksReordered,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ReorderableListView.builder(
+      itemCount: tasks.length,
+      onReorder: (oldIndex, newIndex) {
+        final reorderedTasks = List<Task>.from(tasks);
+        
+        if (oldIndex < newIndex) {
+          newIndex -= 1;
+        }
+        
+        final item = reorderedTasks.removeAt(oldIndex);
+        reorderedTasks.insert(newIndex, item);
+        
+        // Update sort orders
+        final updatedTasks = reorderedTasks.asMap().entries.map((entry) {
+          final index = entry.key;
+          final task = entry.value;
+          return task.copyWith(sortOrder: index);
+        }).toList();
+        
+        onTasksReordered(updatedTasks);
+      },
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        return TaskTile(
+          key: ValueKey(task.id),
+          task: task,
+          onTap: () => _navigateToTaskDetail(context, task),
+        );
+      },
+    );
+  }
+}
+
+class TaskBloc extends Bloc<TaskEvent, TaskState> {
+  Future<void> _onReorderTasks(
+    ReorderTasksEvent event,
+    Emitter<TaskState> emit,
+  ) async {
+    try {
+      // Update local state immediately for responsive UI
+      if (state is TaskLoadedState) {
+        emit(TaskLoadedState(tasks: event.reorderedTasks));
+      }
+      
+      // Persist to local storage
+      await taskRepository.updateTasksSortOrder(event.reorderedTasks);
+      
+      // Sync to remote storage
+      await taskRepository.syncTasksToRemote(event.reorderedTasks);
+      
+    } catch (e) {
+      // Revert to previous state on error
+      if (state is TaskLoadedState) {
+        emit(TaskLoadedState(tasks: event.originalTasks));
+      }
+      emit(TaskErrorState(message: 'Failed to reorder tasks: ${e.toString()}'));
+    }
+  }
+}
+```
+
+### Estimated Duration Tracking
+- **Duration Input**: Provide intuitive duration input (Pomodoros or minutes)
+- **Duration Validation**: Validate reasonable duration ranges
+- **Duration Analytics**: Track estimated vs actual duration for insights
+- **Duration Suggestions**: Suggest durations based on task type or history
+
+✅ **Good Duration Tracking Implementation:**
+```dart
+class DurationInputWidget extends StatefulWidget {
+  final Duration? initialDuration;
+  final Function(Duration) onDurationChanged;
+  
+  const DurationInputWidget({
+    super.key,
+    this.initialDuration,
+    required this.onDurationChanged,
+  });
+
+  @override
+  State<DurationInputWidget> createState() => _DurationInputWidgetState();
+}
+
+class _DurationInputWidgetState extends State<DurationInputWidget> {
+  late Duration _duration;
+  bool _isPomodoroMode = true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _duration = widget.initialDuration ?? Duration(minutes: 25);
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Estimated Duration',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const Spacer(),
+            Switch(
+              value: _isPomodoroMode,
+              onChanged: (value) {
+                setState(() {
+                  _isPomodoroMode = value;
+                  if (value) {
+                    // Convert to Pomodoros (25min each)
+                    _duration = Duration(minutes: (_duration.inMinutes / 25).ceil() * 25);
+                  }
+                });
+                widget.onDurationChanged(_duration);
+              },
+            ),
+            Text(_isPomodoroMode ? 'Pomodoros' : 'Minutes'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_isPomodoroMode) _buildPomodoroSelector(),
+        if (!_isPomodoroMode) _buildMinuteSelector(),
+      ],
+    );
+  }
+  
+  Widget _buildPomodoroSelector() {
+    final pomodoros = (_duration.inMinutes / 25).round();
+    
+    return Row(
+      children: [
+        IconButton(
+          onPressed: pomodoros > 1 ? () => _updateDuration(Duration(minutes: (pomodoros - 1) * 25)) : null,
+          icon: const Icon(Icons.remove),
+        ),
+        Text(
+          '$pomodoros Pomodoro${pomodoros != 1 ? 's' : ''}',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        IconButton(
+          onPressed: pomodoros < 10 ? () => _updateDuration(Duration(minutes: (pomodoros + 1) * 25)) : null,
+          icon: const Icon(Icons.add),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildMinuteSelector() {
+    return Row(
+      children: [
+        IconButton(
+          onPressed: _duration.inMinutes > 5 ? () => _updateDuration(_duration - Duration(minutes: 5)) : null,
+          icon: const Icon(Icons.remove),
+        ),
+        Text(
+          '${_duration.inMinutes} minutes',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        IconButton(
+          onPressed: _duration.inMinutes < 120 ? () => _updateDuration(_duration + Duration(minutes: 5)) : null,
+          icon: const Icon(Icons.add),
+        ),
+      ],
+    );
+  }
+  
+  void _updateDuration(Duration newDuration) {
+    setState(() {
+      _duration = newDuration;
+    });
+    widget.onDurationChanged(_duration);
+  }
+}
+```
+
+## Exceptions
+- Archived tasks can be viewed but not selected for new timers
+- Completed tasks can be reopened for additional work sessions
+- System tasks (like "Break") don't require project association

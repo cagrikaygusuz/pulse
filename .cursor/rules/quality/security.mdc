@@ -1,0 +1,469 @@
+---
+description: Enforce security best practices for Pulse Pomodoro timer
+globs:
+  - 'lib/**/*.dart'
+  - 'android/**/*'
+  - 'ios/**/*'
+  - 'web/**/*'
+alwaysApply: true
+priority: high
+---
+
+# Security Standards
+
+## Objective
+Implement comprehensive security measures for the Pulse Pomodoro timer to protect user data, ensure secure authentication, and maintain data privacy.
+
+## Context
+- Cross-platform Flutter Pomodoro timer
+- Firebase Authentication and Firestore
+- Local data storage with Isar
+- User privacy and data protection
+- Multi-platform security considerations
+
+## Rules
+
+### Authentication Security
+- **Secure Authentication**: Use Firebase Auth with proper security rules
+- **Session Management**: Implement secure session management
+- **Password Policies**: Enforce strong password requirements
+- **Multi-Factor Authentication**: Support MFA when available
+
+✅ **Good Authentication Security:**
+```dart
+class SecureAuthService {
+  final FirebaseAuth _auth;
+  final GoogleSignIn _googleSignIn;
+  
+  SecureAuthService({
+    required FirebaseAuth auth,
+    required GoogleSignIn googleSignIn,
+  }) : _auth = auth,
+       _googleSignIn = googleSignIn;
+  
+  Future<AuthResult> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      // Validate input
+      if (!_isValidEmail(email)) {
+        throw AuthException('Invalid email format');
+      }
+      
+      if (!_isStrongPassword(password)) {
+        throw AuthException('Password does not meet security requirements');
+      }
+      
+      final credential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      
+      if (credential.user != null) {
+        await _logSignInEvent(credential.user!.uid, 'email');
+        return AuthResult.success(credential.user!);
+      } else {
+        throw AuthException('Sign in failed');
+      }
+    } on FirebaseAuthException catch (e) {
+      await _logSecurityEvent('auth_failed', {'error': e.code});
+      throw AuthException(_getAuthErrorMessage(e));
+    }
+  }
+  
+  bool _isValidEmail(String email) {
+    return RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        .hasMatch(email);
+  }
+  
+  bool _isStrongPassword(String password) {
+    // At least 8 characters, 1 uppercase, 1 lowercase, 1 number, 1 special char
+    return password.length >= 8 &&
+           password.contains(RegExp(r'[A-Z]')) &&
+           password.contains(RegExp(r'[a-z]')) &&
+           password.contains(RegExp(r'[0-9]')) &&
+           password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+  }
+  
+  Future<void> _logSignInEvent(String userId, String method) async {
+    await FirebaseAnalytics.instance.logEvent(
+      name: 'user_sign_in',
+      parameters: {
+        'user_id': userId,
+        'method': method,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+  }
+}
+```
+
+### Data Encryption
+- **Local Encryption**: Encrypt sensitive local data
+- **Transit Encryption**: Ensure HTTPS for all network requests
+- **Key Management**: Secure key storage and rotation
+- **Data Classification**: Classify data by sensitivity level
+
+✅ **Good Data Encryption:**
+```dart
+class SecureStorageService {
+  static const String _encryptionKey = 'pulse_encryption_key';
+  
+  Future<void> storeSecureData(String key, String value) async {
+    try {
+      final encryptedValue = await _encrypt(value);
+      await _storage.write(key: key, value: encryptedValue);
+    } catch (e) {
+      throw SecureStorageException('Failed to store secure data: ${e.toString()}');
+    }
+  }
+  
+  Future<String?> getSecureData(String key) async {
+    try {
+      final encryptedValue = await _storage.read(key: key);
+      if (encryptedValue != null) {
+        return await _decrypt(encryptedValue);
+      }
+      return null;
+    } catch (e) {
+      throw SecureStorageException('Failed to retrieve secure data: ${e.toString()}');
+    }
+  }
+  
+  Future<String> _encrypt(String plainText) async {
+    final key = await _getEncryptionKey();
+    final iv = IV.fromSecureRandom(16);
+    final encrypter = Encrypter(AES(key));
+    final encrypted = encrypter.encrypt(plainText, iv: iv);
+    return '${iv.base64}:${encrypted.base64}';
+  }
+  
+  Future<String> _decrypt(String encryptedText) async {
+    final parts = encryptedText.split(':');
+    if (parts.length != 2) {
+      throw SecureStorageException('Invalid encrypted data format');
+    }
+    
+    final key = await _getEncryptionKey();
+    final iv = IV.fromBase64(parts[0]);
+    final encrypted = Encrypted.fromBase64(parts[1]);
+    final encrypter = Encrypter(AES(key));
+    return encrypter.decrypt(encrypted, iv: iv);
+  }
+  
+  Future<Key> _getEncryptionKey() async {
+    // Generate or retrieve encryption key securely
+    final keyString = await _storage.read(key: _encryptionKey);
+    if (keyString != null) {
+      return Key.fromBase64(keyString);
+    } else {
+      final key = Key.fromSecureRandom(32);
+      await _storage.write(key: _encryptionKey, value: key.base64);
+      return key;
+    }
+  }
+}
+```
+
+### Input Validation
+- **Sanitization**: Sanitize all user inputs
+- **Validation Rules**: Implement comprehensive validation
+- **SQL Injection Prevention**: Prevent injection attacks
+- **XSS Prevention**: Prevent cross-site scripting
+
+✅ **Good Input Validation:**
+```dart
+class InputValidator {
+  static ValidationResult validateTaskName(String name) {
+    if (name.isEmpty) {
+      return ValidationResult.error('Task name cannot be empty');
+    }
+    
+    if (name.length > 100) {
+      return ValidationResult.error('Task name must be less than 100 characters');
+    }
+    
+    // Check for potentially malicious content
+    if (_containsMaliciousContent(name)) {
+      return ValidationResult.error('Task name contains invalid characters');
+    }
+    
+    return ValidationResult.success();
+  }
+  
+  static ValidationResult validateProjectName(String name) {
+    if (name.isEmpty) {
+      return ValidationResult.error('Project name cannot be empty');
+    }
+    
+    if (name.length > 50) {
+      return ValidationResult.error('Project name must be less than 50 characters');
+    }
+    
+    if (_containsMaliciousContent(name)) {
+      return ValidationResult.error('Project name contains invalid characters');
+    }
+    
+    return ValidationResult.success();
+  }
+  
+  static ValidationResult validateDuration(Duration duration) {
+    if (duration.inMinutes < 1) {
+      return ValidationResult.error('Duration must be at least 1 minute');
+    }
+    
+    if (duration.inMinutes > 120) {
+      return ValidationResult.error('Duration must be less than 2 hours');
+    }
+    
+    return ValidationResult.success();
+  }
+  
+  static bool _containsMaliciousContent(String input) {
+    final maliciousPatterns = [
+      r'<script[^>]*>.*?</script>',
+      r'javascript:',
+      r'on\w+\s*=',
+      r'<iframe[^>]*>.*?</iframe>',
+      r'<object[^>]*>.*?</object>',
+      r'<embed[^>]*>.*?</embed>',
+    ];
+    
+    for (final pattern in maliciousPatterns) {
+      if (RegExp(pattern, caseSensitive: false).hasMatch(input)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+}
+
+class ValidationResult {
+  final bool isValid;
+  final String? errorMessage;
+  
+  const ValidationResult._(this.isValid, this.errorMessage);
+  
+  factory ValidationResult.success() => const ValidationResult._(true, null);
+  factory ValidationResult.error(String message) => ValidationResult._(false, message);
+}
+```
+
+### Firestore Security Rules
+- **User Isolation**: Ensure users can only access their own data
+- **Data Validation**: Validate data structure in security rules
+- **Rate Limiting**: Implement rate limiting in security rules
+- **Audit Logging**: Log security events
+
+✅ **Good Firestore Security Rules:**
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can only access their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Projects belong to users
+    match /projects/{projectId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // Tasks belong to projects
+    match /tasks/{taskId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.userId;
+    }
+    
+    // Pomodoro sessions belong to users
+    match /pomodoro_sessions/{sessionId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // Validate data structure
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 50 &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    function isValidTask(data) {
+      return data.keys().hasAll(['name', 'projectId', 'userId', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.name.size() > 0 &&
+        data.name.size() <= 100 &&
+        data.projectId is string &&
+        data.userId is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+  }
+}
+```
+
+### Privacy Protection
+- **Data Minimization**: Collect only necessary data
+- **Consent Management**: Implement proper consent mechanisms
+- **Data Retention**: Implement data retention policies
+- **Right to be Forgotten**: Support data deletion requests
+
+✅ **Good Privacy Protection:**
+```dart
+class PrivacyManager {
+  static const String _consentKey = 'user_consent';
+  static const String _dataRetentionKey = 'data_retention_days';
+  
+  Future<bool> hasUserConsent() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_consentKey) ?? false;
+  }
+  
+  Future<void> requestConsent() async {
+    final consent = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Privacy Consent'),
+        content: const Text(
+          'We collect minimal data to provide our service:\n\n'
+          '• Session completion times (for analytics)\n'
+          '• Task names and durations (for your productivity insights)\n'
+          '• App usage statistics (to improve the app)\n\n'
+          'We do NOT collect:\n'
+          '• Personal information beyond your email\n'
+          '• Task content or descriptions\n'
+          '• Location data\n'
+          '• Device identifiers\n\n'
+          'You can delete your data at any time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Decline'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+    
+    if (consent != null) {
+      await setUserConsent(consent);
+    }
+  }
+  
+  Future<void> setUserConsent(bool consent) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_consentKey, consent);
+    
+    if (!consent) {
+      await deleteAllUserData();
+    }
+  }
+  
+  Future<void> deleteAllUserData() async {
+    try {
+      // Delete local data
+      await _isarRepository.clearAllData();
+      
+      // Delete remote data
+      await _firestoreRepository.deleteAllUserData();
+      
+      // Clear preferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      
+      // Sign out user
+      await FirebaseAuth.instance.signOut();
+      
+    } catch (e) {
+      throw PrivacyException('Failed to delete user data: ${e.toString()}');
+    }
+  }
+  
+  Future<void> exportUserData() async {
+    try {
+      final userData = await _isarRepository.exportAllData();
+      final remoteData = await _firestoreRepository.exportAllData();
+      
+      final exportData = {
+        'localData': userData,
+        'remoteData': remoteData,
+        'exportDate': DateTime.now().toIso8601String(),
+      };
+      
+      // Save to file or send via email
+      await _saveExportData(exportData);
+      
+    } catch (e) {
+      throw PrivacyException('Failed to export user data: ${e.toString()}');
+    }
+  }
+}
+```
+
+### Platform-Specific Security
+- **iOS**: Implement Keychain for secure storage
+- **Android**: Use Android Keystore for encryption
+- **Web**: Implement CSP headers and secure cookies
+- **Desktop**: Use platform-specific secure storage
+
+✅ **Good Platform-Specific Security:**
+```dart
+class PlatformSecureStorage {
+  static Future<void> storeSecureData(String key, String value) async {
+    if (Platform.isIOS) {
+      await _storeInKeychain(key, value);
+    } else if (Platform.isAndroid) {
+      await _storeInKeystore(key, value);
+    } else if (kIsWeb) {
+      await _storeInSecureCookie(key, value);
+    } else {
+      await _storeInSecureFile(key, value);
+    }
+  }
+  
+  static Future<String?> getSecureData(String key) async {
+    if (Platform.isIOS) {
+      return await _getFromKeychain(key);
+    } else if (Platform.isAndroid) {
+      return await _getFromKeystore(key);
+    } else if (kIsWeb) {
+      return await _getFromSecureCookie(key);
+    } else {
+      return await _getFromSecureFile(key);
+    }
+  }
+  
+  static Future<void> _storeInKeychain(String key, String value) async {
+    // iOS Keychain implementation
+    await FlutterSecureStorage().write(key: key, value: value);
+  }
+  
+  static Future<void> _storeInKeystore(String key, String value) async {
+    // Android Keystore implementation
+    await FlutterSecureStorage().write(key: key, value: value);
+  }
+}
+```
+
+## Exceptions
+- Debug mode can disable certain security checks for development
+- Emergency situations can bypass security constraints with proper logging
+- Platform-specific limitations may require alternative security measures

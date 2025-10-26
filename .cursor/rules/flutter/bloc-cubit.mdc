@@ -1,0 +1,296 @@
+---
+description: Enforce BLoC/Cubit pattern implementation for state management in Pulse Pomodoro timer
+globs:
+  - 'lib/presentation/bloc/**/*.dart'
+  - 'lib/presentation/cubit/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# BLoC/Cubit State Management
+
+## Objective
+Implement clean BLoC/Cubit pattern for state management in the Pulse Pomodoro timer, ensuring predictable state transitions and testable business logic.
+
+## Context
+- Flutter Pomodoro timer with complex state transitions
+- Timer lock mechanism preventing interruptions
+- Offline-first synchronization with Firebase
+- Cross-platform state consistency
+
+## Rules
+
+### Cubit vs BLoC Selection
+- **Use Cubit** for simple state transitions without complex event handling
+- **Use BLoC** for complex business flows with multiple event types
+- **Timer Logic**: Use Cubit for countdown ticks and simple state changes
+- **Task Management**: Use BLoC for CRUD operations and complex workflows
+
+✅ **Good Cubit Usage:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  TimerCubit() : super(TimerInitialState());
+  
+  void startTimer(Duration duration) {
+    emit(TimerRunningState(remainingTime: duration));
+  }
+  
+  void pauseTimer() {
+    if (state is TimerRunningState) {
+      final currentState = state as TimerRunningState;
+      emit(TimerPausedState(remainingTime: currentState.remainingTime));
+    }
+  }
+  
+  void tick() {
+    if (state is TimerRunningState) {
+      final currentState = state as TimerRunningState;
+      final newTime = currentState.remainingTime - Duration(seconds: 1);
+      
+      if (newTime.inSeconds <= 0) {
+        emit(TimerCompletedState());
+      } else {
+        emit(TimerRunningState(remainingTime: newTime));
+      }
+    }
+  }
+}
+```
+
+✅ **Good BLoC Usage:**
+```dart
+class TaskBloc extends Bloc<TaskEvent, TaskState> {
+  TaskBloc({
+    required this.taskRepository,
+    required this.projectRepository,
+  }) : super(TaskInitialState()) {
+    on<LoadTasksEvent>(_onLoadTasks);
+    on<CreateTaskEvent>(_onCreateTask);
+    on<UpdateTaskEvent>(_onUpdateTask);
+    on<DeleteTaskEvent>(_onDeleteTask);
+    on<ReorderTasksEvent>(_onReorderTasks);
+  }
+  
+  Future<void> _onLoadTasks(
+    LoadTasksEvent event,
+    Emitter<TaskState> emit,
+  ) async {
+    emit(TaskLoadingState());
+    
+    try {
+      final tasks = await taskRepository.getTasks(event.projectId);
+      emit(TaskLoadedState(tasks: tasks));
+    } catch (e) {
+      emit(TaskErrorState(message: e.toString()));
+    }
+  }
+}
+```
+
+### State Design
+- **Immutable States**: All states must be immutable using `Equatable`
+- **Single Source of Truth**: Each state should represent a complete UI state
+- **State Transitions**: Document all possible state transitions
+- **Error States**: Include specific error states for different failure scenarios
+
+✅ **Good State Design:**
+```dart
+abstract class TimerState extends Equatable {
+  const TimerState();
+  
+  @override
+  List<Object?> get props => [];
+}
+
+class TimerInitialState extends TimerState {
+  const TimerInitialState();
+}
+
+class TimerRunningState extends TimerState {
+  final Duration remainingTime;
+  final String taskId;
+  final DateTime startTime;
+  
+  const TimerRunningState({
+    required this.remainingTime,
+    required this.taskId,
+    required this.startTime,
+  });
+  
+  @override
+  List<Object?> get props => [remainingTime, taskId, startTime];
+}
+
+class TimerPausedState extends TimerState {
+  final Duration remainingTime;
+  final String taskId;
+  
+  const TimerPausedState({
+    required this.remainingTime,
+    required this.taskId,
+  });
+  
+  @override
+  List<Object?> get props => [remainingTime, taskId];
+}
+
+class TimerCompletedState extends TimerState {
+  final String taskId;
+  final Duration completedDuration;
+  final SessionType sessionType;
+  
+  const TimerCompletedState({
+    required this.taskId,
+    required this.completedDuration,
+    required this.sessionType,
+  });
+  
+  @override
+  List<Object?> get props => [taskId, completedDuration, sessionType];
+}
+
+class TimerErrorState extends TimerState {
+  final String message;
+  final String? taskId;
+  
+  const TimerErrorState({
+    required this.message,
+    this.taskId,
+  });
+  
+  @override
+  List<Object?> get props => [message, taskId];
+}
+```
+
+### Event Design (for BLoC)
+- **Immutable Events**: All events must be immutable using `Equatable`
+- **Descriptive Names**: Event names should clearly describe the action
+- **Payload Data**: Include only necessary data in events
+- **Event Categories**: Group related events in the same file
+
+✅ **Good Event Design:**
+```dart
+abstract class TaskEvent extends Equatable {
+  const TaskEvent();
+  
+  @override
+  List<Object?> get props => [];
+}
+
+class LoadTasksEvent extends TaskEvent {
+  final String projectId;
+  
+  const LoadTasksEvent(this.projectId);
+  
+  @override
+  List<Object?> get props => [projectId];
+}
+
+class CreateTaskEvent extends TaskEvent {
+  final String projectId;
+  final String title;
+  final String? description;
+  final Duration estimatedDuration;
+  
+  const CreateTaskEvent({
+    required this.projectId,
+    required this.title,
+    this.description,
+    required this.estimatedDuration,
+  });
+  
+  @override
+  List<Object?> get props => [projectId, title, description, estimatedDuration];
+}
+
+class UpdateTaskEvent extends TaskEvent {
+  final String taskId;
+  final String? title;
+  final String? description;
+  final Duration? estimatedDuration;
+  final bool? isCompleted;
+  
+  const UpdateTaskEvent({
+    required this.taskId,
+    this.title,
+    this.description,
+    this.estimatedDuration,
+    this.isCompleted,
+  });
+  
+  @override
+  List<Object?> get props => [taskId, title, description, estimatedDuration, isCompleted];
+}
+```
+
+### Timer Lock Implementation
+- **State Validation**: Validate timer lock state before allowing transitions
+- **UI Feedback**: Provide clear visual feedback when timer is locked
+- **Graceful Skip**: Implement graceful skip with proper logging
+
+✅ **Good Timer Lock Implementation:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  bool get isTimerLocked => state is TimerRunningState;
+  
+  void startTimer(String taskId, Duration duration) {
+    if (isTimerLocked) {
+      throw TimerLockedException('Cannot start timer while another is running');
+    }
+    
+    emit(TimerRunningState(
+      remainingTime: duration,
+      taskId: taskId,
+      startTime: DateTime.now(),
+    ));
+  }
+  
+  void gracefulSkip() {
+    if (state is TimerRunningState) {
+      final currentState = state as TimerRunningState;
+      
+      // Log the interruption for analytics
+      _logInterruptedSession(currentState);
+      
+      emit(TimerSkippedState(
+        taskId: currentState.taskId,
+        interruptedAt: DateTime.now(),
+        completedDuration: currentState.startTime.difference(DateTime.now()),
+      ));
+    }
+  }
+  
+  void _logInterruptedSession(TimerRunningState state) {
+    // Implementation for logging interrupted sessions
+  }
+}
+```
+
+### Dependency Injection
+- **Repository Injection**: Inject repositories through constructor
+- **Service Locator**: Use GetIt or similar for complex dependency graphs
+- **Testing**: Ensure easy mocking for unit tests
+
+✅ **Good Dependency Injection:**
+```dart
+class TimerCubit extends Cubit<TimerState> {
+  final TaskRepository _taskRepository;
+  final SessionRepository _sessionRepository;
+  final AnalyticsRepository _analyticsRepository;
+  
+  TimerCubit({
+    required TaskRepository taskRepository,
+    required SessionRepository sessionRepository,
+    required AnalyticsRepository analyticsRepository,
+  }) : _taskRepository = taskRepository,
+       _sessionRepository = sessionRepository,
+       _analyticsRepository = analyticsRepository,
+       super(TimerInitialState());
+}
+```
+
+## Exceptions
+- Simple UI state (like loading indicators) can use `StatefulWidget` with `setState`
+- One-time operations (like navigation) don't require BLoC/Cubit
+- Platform-specific state management can use platform channels

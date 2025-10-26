@@ -1,0 +1,390 @@
+---
+description: Enforce Flutter widget best practices and UI patterns for Pulse Pomodoro timer
+globs:
+  - 'lib/presentation/widgets/**/*.dart'
+  - 'lib/presentation/pages/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Widget Design & UI Patterns
+
+## Objective
+Create maintainable, performant, and accessible Flutter widgets for the Pulse Pomodoro timer with consistent UI patterns.
+
+## Context
+- Cross-platform Pomodoro timer with custom visual countdown
+- Material Design 3 with custom color scheme
+- Responsive design for mobile, tablet, and desktop
+- Accessibility requirements for focus management
+
+## Rules
+
+### Widget Composition
+- **Single Responsibility**: Each widget should have one clear purpose
+- **Const Constructors**: Use `const` constructors whenever possible
+- **Extract Methods**: Extract complex build logic into separate methods
+- **Reusable Components**: Create reusable widgets for common patterns
+
+✅ **Good Widget Composition:**
+```dart
+class TimerPage extends StatelessWidget {
+  const TimerPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _buildAppBar(context),
+      body: _buildBody(context),
+      floatingActionButton: _buildFloatingActionButton(context),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context) {
+    return AppBar(
+      title: const Text('Focus Session'),
+      backgroundColor: AppColors.primaryAccent,
+      foregroundColor: Colors.white,
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    return BlocBuilder<TimerCubit, TimerState>(
+      builder: (context, state) {
+        return Column(
+          children: [
+            Expanded(
+              flex: 3,
+              child: _buildVisualCountdown(state),
+            ),
+            Expanded(
+              flex: 2,
+              child: _buildTaskInfo(state),
+            ),
+            Expanded(
+              flex: 1,
+              child: _buildControls(state),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+```
+
+### Custom Paint Widgets
+- **Performance**: Use `CustomPainter` for smooth animations
+- **Repaint Boundary**: Wrap custom painters in `RepaintBoundary`
+- **Animation Controller**: Use `AnimationController` for smooth transitions
+- **Canvas Optimization**: Minimize canvas operations in paint method
+
+✅ **Good Custom Paint Implementation:**
+```dart
+class VisualCountdownWidget extends StatefulWidget {
+  final Duration remainingTime;
+  final Duration totalDuration;
+  final Color primaryColor;
+  final Color backgroundColor;
+  
+  const VisualCountdownWidget({
+    super.key,
+    required this.remainingTime,
+    required this.totalDuration,
+    required this.primaryColor,
+    required this.backgroundColor,
+  });
+
+  @override
+  State<VisualCountdownWidget> createState() => _VisualCountdownWidgetState();
+}
+
+class _VisualCountdownWidgetState extends State<VisualCountdownWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _animation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _animation,
+        builder: (context, child) {
+          return CustomPaint(
+            painter: CountdownPainter(
+              progress: widget.remainingTime.inSeconds / 
+                       widget.totalDuration.inSeconds,
+              primaryColor: widget.primaryColor,
+              backgroundColor: widget.backgroundColor,
+              animationValue: _animation.value,
+            ),
+            child: Center(
+              child: Text(
+                _formatDuration(widget.remainingTime),
+                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: widget.primaryColor,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class CountdownPainter extends CustomPainter {
+  final double progress;
+  final Color primaryColor;
+  final Color backgroundColor;
+  final double animationValue;
+
+  CountdownPainter({
+    required this.progress,
+    required this.primaryColor,
+    required this.backgroundColor,
+    required this.animationValue,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width / 2) - 20;
+    
+    // Background circle
+    final backgroundPaint = Paint()
+      ..color = backgroundColor.withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8.0;
+    
+    canvas.drawCircle(center, radius, backgroundPaint);
+    
+    // Progress arc
+    final progressPaint = Paint()
+      ..color = primaryColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8.0
+      ..strokeCap = StrokeCap.round;
+    
+    final sweepAngle = 2 * pi * progress * animationValue;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -pi / 2, // Start from top
+      sweepAngle,
+      false,
+      progressPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(CountdownPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+           oldDelegate.animationValue != animationValue;
+  }
+}
+```
+
+### Responsive Design
+- **Layout Builder**: Use `LayoutBuilder` for responsive layouts
+- **Media Query**: Use `MediaQuery` for screen size detection
+- **Flexible Widgets**: Use `Flexible` and `Expanded` for adaptive layouts
+- **Breakpoints**: Define consistent breakpoints for different screen sizes
+
+✅ **Good Responsive Design:**
+```dart
+class ResponsiveTimerLayout extends StatelessWidget {
+  const ResponsiveTimerLayout({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth > 1200) {
+          return _buildDesktopLayout(context);
+        } else if (constraints.maxWidth > 600) {
+          return _buildTabletLayout(context);
+        } else {
+          return _buildMobileLayout(context);
+        }
+      },
+    );
+  }
+
+  Widget _buildMobileLayout(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(flex: 3, child: VisualCountdownWidget()),
+        Expanded(flex: 2, child: TaskInfoWidget()),
+        Expanded(flex: 1, child: ControlButtonsWidget()),
+      ],
+    );
+  }
+
+  Widget _buildTabletLayout(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(flex: 2, child: VisualCountdownWidget()),
+        Expanded(flex: 1, child: Column(
+          children: [
+            Expanded(child: TaskInfoWidget()),
+            Expanded(child: ControlButtonsWidget()),
+          ],
+        )),
+      ],
+    );
+  }
+
+  Widget _buildDesktopLayout(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(flex: 3, child: VisualCountdownWidget()),
+        Expanded(flex: 1, child: TaskInfoWidget()),
+        Expanded(flex: 1, child: ControlButtonsWidget()),
+      ],
+    );
+  }
+}
+```
+
+### Accessibility
+- **Semantic Labels**: Provide semantic labels for screen readers
+- **Focus Management**: Ensure proper focus management for keyboard navigation
+- **Color Contrast**: Maintain sufficient color contrast ratios
+- **Touch Targets**: Ensure minimum touch target sizes (44x44 logical pixels)
+
+✅ **Good Accessibility Implementation:**
+```dart
+class AccessibleTimerButton extends StatelessWidget {
+  final String label;
+  final String semanticLabel;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool isEnabled;
+
+  const AccessibleTimerButton({
+    super.key,
+    required this.label,
+    required this.semanticLabel,
+    required this.icon,
+    this.onPressed,
+    this.isEnabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: semanticLabel,
+      hint: isEnabled ? 'Tap to $label' : 'Button is disabled',
+      button: true,
+      enabled: isEnabled,
+      child: Material(
+        color: isEnabled ? AppColors.primaryAccent : Colors.grey,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: isEnabled ? onPressed : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            constraints: const BoxConstraints(
+              minWidth: 44,
+              minHeight: 44,
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+### Theme Integration
+- **Color Scheme**: Use theme colors consistently
+- **Typography**: Use theme text styles
+- **Material 3**: Implement Material Design 3 components
+- **Custom Themes**: Create custom themes for different modes
+
+✅ **Good Theme Integration:**
+```dart
+class AppTheme {
+  static ThemeData get lightTheme {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.primaryAccent,
+        brightness: Brightness.light,
+      ),
+      textTheme: const TextTheme(
+        headlineLarge: TextStyle(
+          fontFamily: 'Inter',
+          fontWeight: FontWeight.bold,
+        ),
+        bodyLarge: TextStyle(
+          fontFamily: 'Inter',
+          fontWeight: FontWeight.normal,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryAccent,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static ThemeData get darkTheme {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.primaryAccent,
+        brightness: Brightness.dark,
+      ),
+      // Dark theme specific overrides
+    );
+  }
+}
+```
+
+## Exceptions
+- Platform-specific widgets (Cupertino) can deviate from Material Design
+- Custom animations may require platform-specific implementations
+- Legacy widgets can be gradually migrated to new patterns

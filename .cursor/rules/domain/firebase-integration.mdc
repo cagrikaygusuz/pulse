@@ -1,0 +1,413 @@
+---
+description: Enforce Firebase integration patterns for Pulse Pomodoro timer with offline-first approach
+globs:
+  - 'lib/data/repositories/firebase/**/*.dart'
+  - 'lib/data/datasources/firebase/**/*.dart'
+  - 'lib/core/services/firebase/**/*.dart'
+alwaysApply: true
+priority: high
+---
+
+# Firebase Integration
+
+## Objective
+Implement robust Firebase integration with offline-first strategy, proper error handling, and cross-platform synchronization for the Pulse Pomodoro timer.
+
+## Context
+- Firebase Authentication for user management
+- Firestore for cloud data storage and synchronization
+- Offline-first approach with Isar local database
+- Cross-platform data consistency
+- Real-time synchronization across devices
+
+## Rules
+
+### Authentication Patterns
+- **User State Management**: Use BLoC for authentication state
+- **Session Persistence**: Maintain user sessions across app restarts
+- **Error Handling**: Handle authentication errors gracefully
+- **Platform Integration**: Support platform-specific authentication flows
+
+✅ **Good Authentication Implementation:**
+```dart
+class AuthBloc extends Bloc<AuthEvent, AuthState> {
+  final FirebaseAuth _firebaseAuth;
+  final UserRepository _userRepository;
+  
+  AuthBloc({
+    required FirebaseAuth firebaseAuth,
+    required UserRepository userRepository,
+  }) : _firebaseAuth = firebaseAuth,
+       _userRepository = userRepository,
+       super(AuthInitialState()) {
+    on<AuthCheckRequested>(_onAuthCheckRequested);
+    on<SignInRequested>(_onSignInRequested);
+    on<SignUpRequested>(_onSignUpRequested);
+    on<SignOutRequested>(_onSignOutRequested);
+    
+    // Listen to auth state changes
+    _firebaseAuth.authStateChanges().listen(_onAuthStateChanged);
+  }
+  
+  Future<void> _onSignInRequested(
+    SignInRequested event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(AuthLoadingState());
+    
+    try {
+      final credential = await _firebaseAuth.signInWithEmailAndPassword(
+        email: event.email,
+        password: event.password,
+      );
+      
+      if (credential.user != null) {
+        await _userRepository.initializeUser(credential.user!);
+        emit(AuthAuthenticatedState(user: credential.user!));
+      } else {
+        emit(AuthErrorState(message: 'Sign in failed'));
+      }
+    } on FirebaseAuthException catch (e) {
+      emit(AuthErrorState(message: _getAuthErrorMessage(e)));
+    } catch (e) {
+      emit(AuthErrorState(message: 'An unexpected error occurred'));
+    }
+  }
+  
+  String _getAuthErrorMessage(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'user-not-found':
+        return 'No user found with this email address';
+      case 'wrong-password':
+        return 'Incorrect password';
+      case 'invalid-email':
+        return 'Invalid email address';
+      case 'user-disabled':
+        return 'This account has been disabled';
+      case 'too-many-requests':
+        return 'Too many failed attempts. Please try again later';
+      default:
+        return 'Authentication failed: ${e.message}';
+    }
+  }
+}
+```
+
+### Firestore Data Patterns
+- **Collection Structure**: Organize collections logically
+- **Document Design**: Design documents for efficient queries
+- **Batch Operations**: Use batch writes for atomic operations
+- **Offline Support**: Ensure offline functionality with local caching
+
+✅ **Good Firestore Collection Structure:**
+```dart
+class FirestoreCollections {
+  static const String users = 'users';
+  static const String projects = 'projects';
+  static const String tasks = 'tasks';
+  static const String pomodoroSessions = 'pomodoro_sessions';
+  static const String achievements = 'achievements';
+  static const String userSettings = 'user_settings';
+}
+
+class FirestoreRepository {
+  final FirebaseFirestore _firestore;
+  final String _userId;
+  
+  FirestoreRepository({
+    required FirebaseFirestore firestore,
+    required String userId,
+  }) : _firestore = firestore,
+       _userId = userId;
+  
+  // Projects
+  Future<List<Project>> getProjects() async {
+    try {
+      final snapshot = await _firestore
+          .collection(FirestoreCollections.projects)
+          .where('userId', isEqualTo: _userId)
+          .where('isArchived', isEqualTo: false)
+          .orderBy('sortOrder')
+          .get();
+      
+      return snapshot.docs
+          .map((doc) => Project.fromFirestore(doc))
+          .toList();
+    } catch (e) {
+      throw FirestoreException('Failed to fetch projects: ${e.toString()}');
+    }
+  }
+  
+  Future<void> createProject(Project project) async {
+    try {
+      await _firestore
+          .collection(FirestoreCollections.projects)
+          .doc(project.id)
+          .set(project.toFirestore());
+    } catch (e) {
+      throw FirestoreException('Failed to create project: ${e.toString()}');
+    }
+  }
+  
+  Future<void> updateProject(Project project) async {
+    try {
+      await _firestore
+          .collection(FirestoreCollections.projects)
+          .doc(project.id)
+          .update(project.toFirestore());
+    } catch (e) {
+      throw FirestoreException('Failed to update project: ${e.toString()}');
+    }
+  }
+  
+  // Batch operations for atomic updates
+  Future<void> reorderProjects(List<Project> projects) async {
+    final batch = _firestore.batch();
+    
+    for (final project in projects) {
+      final docRef = _firestore
+          .collection(FirestoreCollections.projects)
+          .doc(project.id);
+      batch.update(docRef, {'sortOrder': project.sortOrder});
+    }
+    
+    try {
+      await batch.commit();
+    } catch (e) {
+      throw FirestoreException('Failed to reorder projects: ${e.toString()}');
+    }
+  }
+}
+```
+
+### Offline-First Strategy
+- **Local First**: Write to local database first
+- **Sync Later**: Sync to Firestore when connectivity is available
+- **Conflict Resolution**: Handle data conflicts during sync
+- **Offline Indicators**: Show offline status to users
+
+✅ **Good Offline-First Implementation:**
+```dart
+class OfflineFirstRepository {
+  final IsarRepository _isarRepository;
+  final FirestoreRepository _firestoreRepository;
+  final ConnectivityService _connectivityService;
+  
+  OfflineFirstRepository({
+    required IsarRepository isarRepository,
+    required FirestoreRepository firestoreRepository,
+    required ConnectivityService connectivityService,
+  }) : _isarRepository = isarRepository,
+       _firestoreRepository = firestoreRepository,
+       _connectivityService = connectivityService;
+  
+  Future<void> createTask(Task task) async {
+    // Always save to local storage first
+    await _isarRepository.createTask(task);
+    
+    // Try to sync to remote if online
+    if (await _connectivityService.isConnected()) {
+      try {
+        await _firestoreRepository.createTask(task);
+        // Mark as synced
+        await _isarRepository.markTaskAsSynced(task.id);
+      } catch (e) {
+        // Mark as pending sync
+        await _isarRepository.markTaskAsPendingSync(task.id);
+        logger.warning('Failed to sync task to remote: ${e.toString()}');
+      }
+    } else {
+      // Mark as pending sync for later
+      await _isarRepository.markTaskAsPendingSync(task.id);
+    }
+  }
+  
+  Future<void> syncPendingChanges() async {
+    if (!await _connectivityService.isConnected()) {
+      return;
+    }
+    
+    try {
+      // Get all pending sync items
+      final pendingTasks = await _isarRepository.getPendingSyncTasks();
+      final pendingProjects = await _isarRepository.getPendingSyncProjects();
+      final pendingSessions = await _isarRepository.getPendingSyncSessions();
+      
+      // Sync tasks
+      for (final task in pendingTasks) {
+        try {
+          await _firestoreRepository.createTask(task);
+          await _isarRepository.markTaskAsSynced(task.id);
+        } catch (e) {
+          logger.error('Failed to sync task ${task.id}: ${e.toString()}');
+        }
+      }
+      
+      // Sync projects
+      for (final project in pendingProjects) {
+        try {
+          await _firestoreRepository.createProject(project);
+          await _isarRepository.markProjectAsSynced(project.id);
+        } catch (e) {
+          logger.error('Failed to sync project ${project.id}: ${e.toString()}');
+        }
+      }
+      
+      // Sync sessions
+      for (final session in pendingSessions) {
+        try {
+          await _firestoreRepository.createSession(session);
+          await _isarRepository.markSessionAsSynced(session.id);
+        } catch (e) {
+          logger.error('Failed to sync session ${session.id}: ${e.toString()}');
+        }
+      }
+      
+    } catch (e) {
+      logger.error('Failed to sync pending changes: ${e.toString()}');
+    }
+  }
+}
+```
+
+### Real-time Synchronization
+- **Stream Listeners**: Use Firestore streams for real-time updates
+- **Change Detection**: Detect and handle remote changes
+- **Conflict Resolution**: Resolve conflicts between local and remote data
+- **Optimistic Updates**: Update UI optimistically before server confirmation
+
+✅ **Good Real-time Sync Implementation:**
+```dart
+class RealTimeSyncService {
+  final FirestoreRepository _firestoreRepository;
+  final IsarRepository _isarRepository;
+  final StreamController<SyncEvent> _syncController;
+  
+  RealTimeSyncService({
+    required FirestoreRepository firestoreRepository,
+    required IsarRepository isarRepository,
+  }) : _firestoreRepository = firestoreRepository,
+       _isarRepository = isarRepository,
+       _syncController = StreamController<SyncEvent>.broadcast();
+  
+  Stream<SyncEvent> get syncEvents => _syncController.stream;
+  
+  void startListening() {
+    // Listen to projects changes
+    _firestoreRepository.projectsStream.listen(
+      (projects) => _handleRemoteProjectsChange(projects),
+      onError: (error) => _syncController.add(SyncErrorEvent(error.toString())),
+    );
+    
+    // Listen to tasks changes
+    _firestoreRepository.tasksStream.listen(
+      (tasks) => _handleRemoteTasksChange(tasks),
+      onError: (error) => _syncController.add(SyncErrorEvent(error.toString())),
+    );
+  }
+  
+  Future<void> _handleRemoteProjectsChange(List<Project> remoteProjects) async {
+    try {
+      final localProjects = await _isarRepository.getProjects();
+      
+      // Find conflicts and resolve them
+      for (final remoteProject in remoteProjects) {
+        final localProject = localProjects.firstWhere(
+          (p) => p.id == remoteProject.id,
+          orElse: () => remoteProject,
+        );
+        
+        if (localProject.updatedAt.isBefore(remoteProject.updatedAt)) {
+          // Remote is newer, update local
+          await _isarRepository.updateProject(remoteProject);
+          _syncController.add(ProjectUpdatedEvent(remoteProject));
+        } else if (localProject.updatedAt.isAfter(remoteProject.updatedAt)) {
+          // Local is newer, update remote
+          await _firestoreRepository.updateProject(localProject);
+        }
+      }
+      
+    } catch (e) {
+      _syncController.add(SyncErrorEvent('Failed to sync projects: ${e.toString()}'));
+    }
+  }
+}
+```
+
+### Error Handling & Retry Logic
+- **Network Errors**: Handle network connectivity issues
+- **Firestore Errors**: Handle Firestore-specific errors
+- **Retry Logic**: Implement exponential backoff for failed operations
+- **User Feedback**: Provide clear error messages to users
+
+✅ **Good Error Handling:**
+```dart
+class FirebaseErrorHandler {
+  static String getErrorMessage(dynamic error) {
+    if (error is FirebaseException) {
+      switch (error.code) {
+        case 'permission-denied':
+          return 'You don\'t have permission to perform this action';
+        case 'unavailable':
+          return 'Service is temporarily unavailable. Please try again later';
+        case 'deadline-exceeded':
+          return 'Request timed out. Please check your connection';
+        case 'resource-exhausted':
+          return 'Too many requests. Please try again later';
+        case 'unauthenticated':
+          return 'Please sign in to continue';
+        case 'not-found':
+          return 'The requested resource was not found';
+        default:
+          return 'An error occurred: ${error.message}';
+      }
+    } else if (error is SocketException) {
+      return 'No internet connection. Changes will be saved locally';
+    } else if (error is TimeoutException) {
+      return 'Request timed out. Please try again';
+    } else {
+      return 'An unexpected error occurred: ${error.toString()}';
+    }
+  }
+  
+  static bool shouldRetry(dynamic error) {
+    if (error is FirebaseException) {
+      return ['unavailable', 'deadline-exceeded', 'resource-exhausted'].contains(error.code);
+    }
+    return error is SocketException || error is TimeoutException;
+  }
+}
+
+class RetryService {
+  static Future<T> withRetry<T>(
+    Future<T> Function() operation, {
+    int maxRetries = 3,
+    Duration baseDelay = const Duration(seconds: 1),
+  }) async {
+    int attempts = 0;
+    
+    while (attempts < maxRetries) {
+      try {
+        return await operation();
+      } catch (e) {
+        attempts++;
+        
+        if (attempts >= maxRetries || !FirebaseErrorHandler.shouldRetry(e)) {
+          rethrow;
+        }
+        
+        // Exponential backoff
+        final delay = baseDelay * math.pow(2, attempts - 1);
+        await Future.delayed(delay);
+      }
+    }
+    
+    throw Exception('Max retries exceeded');
+  }
+}
+```
+
+## Exceptions
+- Offline mode can disable real-time synchronization
+- Debug mode can bypass authentication for testing
+- Emergency sync can force immediate synchronization
